@@ -1,0 +1,47 @@
+services:
+  rosplat:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+      args:
+        USER_UID: ${USER_UID}
+        USER_GID: ${USER_GID}
+        USERNAME: ${USERNAME}
+        HOSTNAME: ${HOSTNAME}
+        USER_PASSWORD: ${USER_PASSWORD}
+    image: rosplat
+    network_mode: "host"
+    cpus: 8
+    mem_limit: 16g
+    ipc: host
+    pid: host
+    user: "${USERNAME}:${USER_GID}"
+    hostname: ${HOSTNAME}
+    stdin_open: true
+    tty: true
+    working_dir: /home/${USERNAME}
+    command: /bin/bash
+    runtime: nvidia
+    environment:
+      - USER_UID=${USER_UID}
+      - USER_GID=${USER_GID}
+      - USERNAME=${USERNAME}
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - DISPLAY=unix${DISPLAY}
+      - XAUTHORITY=${XAUTHORITY}
+      - SSH_AUTH_SOCK=${SSH_AUTH_SOCK}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - ../:/home/${USERNAME}/projects/ROSplat
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/home/${USERNAME}/.Xauthority:rw
+      - ${HOME}/.ssh:/home/${USERNAME}/.ssh:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [ gpu ]

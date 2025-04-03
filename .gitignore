@@ -30,3 +30,13 @@
 *.exe
 *.out
 *.app
+
+# ROS 
+build/
+install/
+log/
+
+# Python
+.venv/
+venv/
+__pycache__/
