@@ -1,0 +1,25 @@
+name: Test ROSplat Docker Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx (optional but useful)
+        uses: docker/setup-buildx-action@v2
+
+      - name: Make script executable
+        run: chmod +x ./docker/run_docker.sh
+
+      - name: Run Docker build script with no cache
+        run: ./docker/run_docker.sh -n
