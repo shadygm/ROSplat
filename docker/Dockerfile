@@ -26,14 +26,16 @@ RUN locale-gen en_US.UTF-8 && \
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
-# ROS 2 Jazzy setup
+ENV ROS_DISTRO=jazzy
+
+# ROS 2 setup
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | \
     gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" \
     > /etc/apt/sources.list.d/ros2.list
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ros-jazzy-desktop \
+    ros-${ROS_DISTRO}-desktop \
     python3-colcon-common-extensions \
     ros-dev-tools \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -88,7 +90,7 @@ RUN set -eux; \
 
 
 # Setup bashrc for ROS 2
-RUN echo "source /opt/ros/jazzy/setup.bash" >> /home/${USERNAME}/.bashrc && \
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /home/${USERNAME}/.bashrc && \
     chown ${USER_UID}:${USER_GID} /home/${USERNAME}/.bashrc
 
 # Set environment
