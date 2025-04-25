@@ -63,10 +63,18 @@ export ROS_DOMAIN_ID=0
 if [ "$BUILD" = true ]; then
     echo "Building docker image..."
     docker compose build $BUILD_ARGS
+    if [ "$?" -ne 0 ]; then
+        echo "Docker build failed!"
+        exit 1
+    fi
 fi
 
 if [ "$COMPOSEUP" = true ]; then
     echo "Starting docker container..."
     docker compose up -d
+    if [ "$?" -ne 0 ]; then
+        echo "Docker compose up failed!"
+        exit 1
+    fi
     docker compose exec rosplat bash
 fi
