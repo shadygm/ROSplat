@@ -28,29 +28,57 @@
   </section>
 
   <section>
-    <h2>Setup</h2>
-    <p>This project has been developed and tested on <strong>Ubuntu 24.04 LTS</strong> using <strong>ROS2 Jazzy</strong>. It is important to note that this project performs significantly worse without a NVIDIA graphics card.</p>
-    <h3>Dependencies</h3>
-    <ul>
-      <li><strong>Mandatory:</strong> ROS2 (tested on ROS2 Jazzy)</li>
-      <li>
-        <strong>Optional (for GPU-based Sorting):</strong>
-        <ul>
-          <li><code>cupy</code> (or a variant matching your CUDA version)</li>
-          <li><code>torch</code> (if using PyTorch for GPU sorting)</li>
-        </ul>
-      </li>
-    </ul>
-    <p>To install these dependencies, run:</p>
-    <pre><code>pip install -r requirements.txt</code></pre>
+  <h2>Setup</h2>
+  <p>
+    This project was developed and tested on <strong>Ubuntu 24.04 LTS</strong> using <strong>ROS2 Jazzy</strong>.
+    Please note: <strong>Performance degrades significantly without an NVIDIA graphics card.</strong>
+  </p>
+
+  <h3>Dependencies</h3>
+  <ul>
+    <li><strong>Mandatory:</strong> ROS2 (tested on ROS2 Jazzy)</li>
+    <li>
+      <strong>Optional (for GPU-based Sorting):</strong>
+      <ul>
+        <li><code>cupy</code> (ensure compatibility with your CUDA version)</li>
+        <li><code>torch</code> (if using PyTorch for GPU sorting)</li>
+      </ul>
+    </li>
+  </ul>
+
+  <p>To install the optional GPU-based libraries individually:</p>
+  <pre><code>pip install cupy-cuda12x  # Install Cupy (replace 12x with your CUDA version)</code></pre>
+  <pre><code>pip install torch         # Install PyTorch</code></pre>
+
+  <p>
+    The program will automatically prioritize sorting methods in the following order:
+    <strong>1) Torch → 2) Cupy → 3) CPU</strong>
+  </p>
+
+  <p>To install all dependencies at once:</p>
+  <pre><code>pip install -r requirements.txt        # For GPU acceleration</code></pre>
+  <pre><code>pip install -r requirements-no-gpu.txt  # Without GPU acceleration</code></pre>
 
   <h3>Docker-Based Setup</h3>
-    <p>If you prefer to use Docker, the project includes a setup script under the <code>docker</code> directory.</p>
-    <pre><code>cd docker
-./run_docker.sh -h    # To display help and usage instructions
-./run_docker.sh -bu   # To build the Docker image and launch the container using docker-compose</code></pre>
-    <p>This method ensures a consistent environment and avoids dependency issues. </p>
-  </section>
+  <p>
+    Alternatively, you can set up the project using Docker. A setup script is available under the <code>docker</code> directory.
+  </p>
+
+  <p>Before running Docker, ensure you have installed:</p>
+  <pre><code>sudo apt-get install -y nvidia-container-toolkit</code></pre>
+  <p>This enables GPU communication between the host and the container.</p>
+
+  <p>Then, to build and run the Docker container:</p>
+  <pre><code>cd docker
+./run_docker.sh -h    # Display help and usage instructions
+./run_docker.sh -bu   # Build the Docker image and launch the container with docker-compose</code></pre>
+
+  <p>
+    <strong>Important:</strong> Ensure the host machine's CUDA version matches the version specified in the Dockerfile.
+    If you are using a CUDA version other than 12.6, update the Dockerfile accordingly.
+  </p>
+</section>
+
 
 
 
