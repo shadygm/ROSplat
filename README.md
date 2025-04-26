@@ -42,14 +42,19 @@
       </li>
     </ul>
     <p>To install these dependencies, run:</p>
-    <pre><code>pip install -r requirements.txt</code></pre>
+    <pre><code>pip install -r requirements.txt # With GPU acceleration</code></pre>
+    <pre><code>pip install -r requirements-no-gpu.txt # Without GPU acceleration</code></pre>
 
   <h3>Docker-Based Setup</h3>
     <p>If you prefer to use Docker, the project includes a setup script under the <code>docker</code> directory.</p>
+    <p>Before running docker, make sure to install the following:</p>
+    <pre><code>sudo apt-get install -y nvidia-container-toolkit</code></pre>
+    <p>This is needed to enable intercommunication between the docker container and your host Nvidia GPU.</p>
     <pre><code>cd docker
 ./run_docker.sh -h    # To display help and usage instructions
 ./run_docker.sh -bu   # To build the Docker image and launch the container using docker-compose</code></pre>
-    <p>This method ensures a consistent environment and avoids dependency issues. </p>
+    <p>This method ensures a consistent environment and avoids dependency issues. It is important that the version of CUDA on the host machine matches with what the docker image is built with. If you are using anything but CUDA 12.6, make sure to change the Dockerfile to use the same as the host version.</p>
+    
   </section>
 
 
