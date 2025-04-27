@@ -1,5 +1,5 @@
 """
-Script Name: gaussian_publisher_ros2_array.py
+Script Name: generate_gaussian_bag.py
 
 Description:
     This script loads Gaussian data from a specified PLY file, initializes
@@ -22,11 +22,9 @@ Requirements:
             gaussian_interface/SingleGaussian[] gaussians
 
 Usage:
-    1. Make this script executable:
-         chmod +x gaussian_publisher_ros2_array.py
-    2. Run it (optionally passing in a path to the PLY file):
+    1. Run it (optionally passing in a path to the PLY file):
          ./gaussian_publisher_ros2_array.py --ply_path /path/to/your_file.ply
-    3. In a separate terminal, record the published data:
+    2. In a separate terminal, record the published data or visualize it using ROSplat:
          ros2 bag record /gaussian_test
 """
 

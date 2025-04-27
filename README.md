@@ -66,7 +66,7 @@
 
   <p>Before running Docker, ensure you have installed:</p>
   <pre><code>sudo apt-get install -y nvidia-container-toolkit</code></pre>
-  <p>This enables GPU communication between the host and the container.</p>
+  <p>This enables GPU communication between the host and the container. If you come accross any other issues, follow the instructions under <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html" target="_blank"> the following link</a> </p>
 
   <p>Then, to build and run the Docker container:</p>
   <pre><code>cd docker
@@ -78,9 +78,6 @@
     If you are using a CUDA version other than 12.6, update the Dockerfile accordingly.
   </p>
 </section>
-
-
-
 
   <section>
     <h2>Building the Gaussian Messages</h2>
@@ -113,7 +110,7 @@ float32[] spherical_harmonics</code></pre>
     <h2>Usage</h2>
     <p>Once the Gaussian messages are built, you can launch the visualizer from the project's root directory:</p>
     <pre><code>cd src
-python main.py</code></pre>
+python3 main.py</code></pre>
   </section>
 
   <section>
