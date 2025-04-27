@@ -71,6 +71,9 @@ fi
 
 if [ "$COMPOSEUP" = true ]; then
     echo "Starting docker container..."
+    if [ ! -d "../data" ]; then
+        mkdir ../data
+    fi
     docker compose up -d
     if [ "$?" -ne 0 ]; then
         echo "Docker compose up failed!"
