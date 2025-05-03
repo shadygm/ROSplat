@@ -1,4 +1,3 @@
-
 <div class="container">
   <header>
     <h1>ROSplat</h1>
@@ -13,7 +12,7 @@
   <section>
     <h2>Overview</h2>
     <p>
-      ROSplat is the first online ROS2-based visualizer that leverages Gaussian splatting to render complex 3D scenes. It is designed to efficiently visualize millions of gaussians by using custom ROS2 messages and GPU-accelerated sorting and rendering techniques. ROSplat also supports data loading from PLY files and integrates with ROS2 tools such as bag recording.
+      ROSplat is the first online ROS2-based visualizer that leverages Gaussian splatting to render complex 3D scenes. It is designed to efficiently visualize millions of gaussians by using custom ROS2 messages and GPU-accelerated sorting and rendering techniques. ROSplat also supports data loading from PLY files.
     </p>
   </section>
 
@@ -28,56 +27,53 @@
   </section>
 
   <section>
-  <h2>Setup</h2>
-  <p>
-    This project was developed and tested on <strong>Ubuntu 24.04 LTS</strong> using <strong>ROS2 Jazzy</strong>.
-    Please note: <strong>Performance degrades significantly without an NVIDIA graphics card.</strong>
-  </p>
-
-  <h3>Dependencies</h3>
-  <ul>
-    <li><strong>Mandatory:</strong> ROS2 (tested on ROS2 Jazzy)</li>
-    <li>
-      <strong>Optional (for GPU-based Sorting):</strong>
-      <ul>
-        <li><code>cupy</code> (ensure compatibility with your CUDA version)</li>
-        <li><code>torch</code> (if using PyTorch for GPU sorting)</li>
-      </ul>
-    </li>
-  </ul>
-
-  <p>To install the optional GPU-based libraries individually:</p>
-  <pre><code>pip install cupy-cuda12x  # Install Cupy (replace 12x with your CUDA version)</code></pre>
-  <pre><code>pip install torch         # Install PyTorch</code></pre>
-
-  <p>
-    The program will automatically prioritize sorting methods in the following order:
-    <strong>1) Torch → 2) Cupy → 3) CPU</strong>
-  </p>
-
-  <p>To install all dependencies at once:</p>
-  <pre><code>pip install -r requirements.txt        # For GPU acceleration</code></pre>
-  <pre><code>pip install -r requirements-no-gpu.txt  # Without GPU acceleration</code></pre>
-
-  <h3>Docker-Based Setup</h3>
-  <p>
-    Alternatively, you can set up the project using Docker. A setup script is available under the <code>docker</code> directory.
-  </p>
-
-  <p>Before running Docker, ensure you have installed:</p>
-  <pre><code>sudo apt-get install -y nvidia-container-toolkit</code></pre>
-  <p>This enables GPU communication between the host and the container. If you come accross any other issues, follow the instructions under <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html" target="_blank"> the following link</a> </p>
-
-  <p>Then, to build and run the Docker container:</p>
-  <pre><code>cd docker
+    <h2>Setup</h2>
+    <p>
+      This project was developed and tested on <strong>Ubuntu 24.04 LTS</strong> using <strong>ROS2 Jazzy</strong>.
+      Please note: <strong>Performance degrades significantly without an NVIDIA graphics card.</strong>
+    </p>
+    <h3>Dependencies</h3>
+    <ul>
+      <li><strong>Mandatory:</strong> ROS2 (tested on ROS2 Jazzy)</li>
+      <li>
+        <strong>Optional (for GPU-based Sorting):</strong>
+        <ul>
+          <li><code>cupy</code> (ensure compatibility with your CUDA version)</li>
+          <li><code>torch</code> (if using PyTorch for GPU sorting)</li>
+        </ul>
+      </li>
+    </ul>
+    <p>To install the optional GPU-based libraries individually:</p>
+    <pre><code>pip install cupy-cuda12x  # Install Cupy (replace 12x with your CUDA version)</code></pre>
+    <pre><code>pip install torch         # Install PyTorch</code></pre>
+    <p>
+      The program will automatically prioritize sorting methods in the following order:
+      <strong>1) Torch → 2) Cupy → 3) CPU</strong>
+    </p>
+    <p>To install all dependencies at once:</p>
+    <pre><code>pip install -r requirements.txt        # For GPU acceleration</code></pre>
+    <pre><code>pip install -r requirements-no-gpu.txt  # Without GPU acceleration</code></pre>
+    <h3>Docker-Based Setup</h3>
+    <p>
+      Alternatively, you can set up the project using Docker. A setup script is available under the <code>docker</code> directory.
+    </p>
+    <p>Before running Docker, ensure you have installed:</p>
+    <pre><code>sudo apt-get install -y nvidia-container-toolkit</code></pre>
+    <p>This enables GPU communication between the host and the container. If you come across any other issues, follow the instructions under <a href="https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html" target="_blank">the official NVIDIA guide</a>.</p>
+    <p>Then, to build and run the Docker container:</p>
+    <pre><code>cd docker
 ./run_docker.sh -h    # Display help and usage instructions
 ./run_docker.sh -bu   # Build the Docker image and launch the container with docker-compose</code></pre>
-
-  <p>
-    <strong>Important:</strong> Ensure the host machine's CUDA version matches the version specified in the Dockerfile.
-    If you are using a CUDA version other than 12.6, update the Dockerfile accordingly.
-  </p>
-</section>
+    <p>
+      <strong>Important:</strong> Ensure the host machine's CUDA version matches the version specified in the Dockerfile.
+      If you are using a CUDA version other than 12.6, update the Dockerfile accordingly.
+    </p>
+    <h4>Accessing ROSplat Inside the Container</h4>
+    <p>
+      After starting the Docker container, navigate to the project directory inside the container:
+    </p>
+    <pre><code>cd projects/ROSplat</code></pre>
+  </section>
 
   <section>
     <h2>Building the Gaussian Messages</h2>
@@ -111,6 +107,25 @@ float32[] spherical_harmonics</code></pre>
     <p>Once the Gaussian messages are built, you can launch the visualizer from the project's root directory:</p>
     <pre><code>cd src
 python3 main.py</code></pre>
+    <h3>Testing Gaussian Visualization</h3>
+    <p>
+      To test visualizing Gaussians over ROS2 messages:
+    </p>
+    <ol>
+      <li>Place your <code>PLY</code> file under the <code>data/</code> directory.</li>
+      <li>Open <strong>two terminals inside the Docker container</strong>:</li>
+      <ul>
+        <li><strong>Terminal 1:</strong> Run the visualizer:</li>
+        <pre><code>cd projects/ROSplat/src
+python3 main.py</code></pre>
+        <li><strong>Terminal 2:</strong> Publish Gaussian data:</li>
+        <pre><code>cd projects/ROSplat/misc
+python3 generate_gaussian_bag.py --ply_path ../data/your_file.ply</code></pre>
+      </ul>
+    </ol>
+    <p>
+      The <code>generate_gaussian_bag.py</code> script will continuously publish batches of Gaussian messages to the <code>/gaussian_test</code> topic, which the visualizer will display in real time whenever you are subscribed to it.
+    </p>
   </section>
 
   <section>
@@ -118,34 +133,33 @@ python3 main.py</code></pre>
     <p>Contributions and feedback are welcome!</p>
   </section>
 
-<section>
-  <h2>Acknowledgments</h2>
-  <p>
-    I'm glad to have worked on such a challenging topic and grateful for the invaluable advice and support I received throughout this project.
-  </p>
-  <p>
-    Special thanks to 
-    <a href="https://scholar.google.com/citations?user=14GwKcMAAAAJ&amp;hl=en" target="_blank" rel="noopener noreferrer">
-      Qihao Yuan
-    </a> 
-    and 
-    <a href="https://kailaili.github.io/" target="_blank" rel="noopener noreferrer">
-      Kailai Li
-    </a> 
-    for their guidance and encouragement as well as the constructive feedback that helped shape this work.
-  </p>
-  <p>
-    This project was additionally influenced by 
-    <a href="https://github.com/limacv" target="_blank" rel="noopener noreferrer">
-      limacv
-    </a>'s implementation of the  
-    <a href="https://github.com/limacv/GaussianSplattingViewer" target="_blank" rel="noopener noreferrer">
-      GaussianSplattingViewer
-    </a> 
-    repository.
-  </p>
-</section>
-
+  <section>
+    <h2>Acknowledgments</h2>
+    <p>
+      I'm glad to have worked on such a challenging topic and grateful for the invaluable advice and support I received throughout this project.
+    </p>
+    <p>
+      Special thanks to 
+      <a href="https://scholar.google.com/citations?user=14GwKcMAAAAJ&amp;hl=en" target="_blank" rel="noopener noreferrer">
+        Qihao Yuan
+      </a> 
+      and 
+      <a href="https://kailaili.github.io/" target="_blank" rel="noopener noreferrer">
+        Kailai Li
+      </a> 
+      for their guidance and encouragement as well as the constructive feedback that helped shape this work.
+    </p>
+    <p>
+      This project was additionally influenced by 
+      <a href="https://github.com/limacv" target="_blank" rel="noopener noreferrer">
+        limacv
+      </a>'s implementation of the  
+      <a href="https://github.com/limacv/GaussianSplattingViewer" target="_blank" rel="noopener noreferrer">
+        GaussianSplattingViewer
+      </a> 
+      repository.
+    </p>
+  </section>
 
   <section>
     <h2>Contact</h2>

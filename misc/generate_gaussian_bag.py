@@ -23,7 +23,7 @@ Requirements:
 
 Usage:
     1. Run it (optionally passing in a path to the PLY file):
-         ./gaussian_publisher_ros2_array.py --ply_path /path/to/your_file.ply
+         ./generate_gaussian_bag.py --ply_path /path/to/your_file.ply
     2. In a separate terminal, record the published data or visualize it using ROSplat:
          ros2 bag record /gaussian_test
 """
