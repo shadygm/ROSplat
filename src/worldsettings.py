@@ -5,8 +5,15 @@ from camera import Camera
 from gaussian_interface.msg import SingleGaussian, GaussianArray
 import gaussian_representation
 from gaussian_representation import GaussianData
-from gaussian_renderer import OpenGLRenderer
+from base_gaussian_renderer import OpenGLRenderer
+from CUDARenderer import CUDARenderer
 import util
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+
 
 
 # Maximum number of gaussians allowed.
@@ -82,10 +89,20 @@ class WorldSettings:
 
     def create_gaussian_renderer(self) -> None:
         """
-        Create an OpenGL renderer for gaussian visualization.
+        Create a renderer for gaussian visualization, using CUDA if available.
         """
-        self.gauss_renderer = OpenGLRenderer(self.world_camera.w, self.world_camera.h, self)
+        try:
+            if HAS_TORCH and torch.cuda.is_available():
+                self.gauss_renderer = CUDARenderer(self.world_camera.w, self.world_camera.h, self)
+                util.logger.info("CUDA renderer initialized.")
+            else:
+                raise RuntimeError("Torch missing or CUDA not available.")
+        except Exception as e:
+            util.logger.info(f"{e} Falling back to OpenGL renderer.")
+            self.gauss_renderer = OpenGLRenderer(self.world_camera.w, self.world_camera.h, self)
+
         self.update_activated_render_state()
+
 
     def process_translation(self, dx: float, dy: float, dz: float) -> None:
         """
