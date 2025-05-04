@@ -178,3 +178,14 @@ class Camera:
         z_axis /= np.linalg.norm(z_axis)
         x_axis = np.cross(self.up, z_axis)
         return np.stack([x_axis, self.up, z_axis], axis=-1)
+
+    def get_intrinsics_matrix(self) -> np.ndarray:
+        """
+        Compute and return the intrinsic camera matrix.
+        """
+        f = self.w / (2 * np.tan(self.fovy / 2))
+        return np.array([
+            [f, 0, self.w / 2],
+            [0, f, self.h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
