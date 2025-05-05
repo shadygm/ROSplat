@@ -102,7 +102,11 @@ class Camera:
         """
         self.yaw += xoffset * self.rot_sensitivity
         self.pitch += yoffset * self.rot_sensitivity
-        self.pitch = np.clip(self.pitch, -np.pi / 2, np.pi / 2)
+        epsilon = 1e-3
+        self.pitch = np.clip(self.pitch,
+                            -np.pi/2 + epsilon,
+                            np.pi/2 - epsilon)
+
 
         front = np.array([
             np.cos(self.yaw) * np.cos(self.pitch),
@@ -140,13 +144,11 @@ class Camera:
         return self.position
 
     def get_view_matrix(self) -> np.ndarray:
-        """
-        Compute and return the view matrix using glm.
-        """
-        pos = glm.vec3(*self.position)
-        tgt = glm.vec3(*self.target)
-        up_vec = glm.vec3(*self.up)
+        pos     = glm.vec3(*self.position)
+        tgt     = glm.vec3(*self.target)
+        up_vec  = glm.vec3(*self.up)
         return np.array(glm.lookAt(pos, tgt, up_vec))
+
 
     def get_project_matrix(self) -> np.ndarray:
         """

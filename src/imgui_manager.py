@@ -293,38 +293,45 @@ def update_texture(tex: int, frame: np.ndarray) -> None:
     flags=implot.AxisFlags_.auto_fit | implot.AxisFlags_.no_tick_labels
 )
 def display_frames_tab() -> None:
-    """
-    Display the current ROS frame using an ImPlot-based visualization.
-    """
-    static = display_frames_tab
-
     try:
-        frame_to_show = frame_queue.get_nowait()
-        frame_queue.put(frame_to_show)  # Replace back for continuous viewing
+        frame = frame_queue.get_nowait()
+        # put it back so we keep showing it
+        frame_queue.put(frame)
     except queue.Empty:
-        frame_to_show = None
+        frame = None
 
-    if frame_to_show is None:
+    if frame is None:
         imgui.text("Waiting for frame...")
         return
 
-    height, width, channels = frame_to_show.shape
+    h, w, _ = frame.shape
 
-    if static.image_texture is None:
-        static.image_texture = create_texture_from_frame(frame_to_show)
-        static.texture_width = width
-        static.texture_height = height
-    else:
-        update_texture(static.image_texture, frame_to_show)
+    if display_frames_tab.image_texture is None:
+        # first time: create GL texture
+        display_frames_tab.image_texture = gl.glGenTextures(1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, display_frames_tab.image_texture)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+        display_frames_tab.texture_width = w
+        display_frames_tab.texture_height = h
 
-    avail_width, avail_height = imgui.get_content_region_avail()
-    changed, static.auto_fit = imgui.checkbox("Auto-fit", static.auto_fit)
-    if changed:
-        static.flags = implot.AxisFlags_.auto_fit | implot.AxisFlags_.no_tick_labels if static.auto_fit else implot.AxisFlags_.no_tick_labels
+    # Update texture with new frame
+    gl.glBindTexture(gl.GL_TEXTURE_2D, display_frames_tab.image_texture)
+    gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+    gl.glTexImage2D(
+        gl.GL_TEXTURE_2D, 0, gl.GL_RGB,
+        w, h, 0,
+        gl.GL_RGB, gl.GL_UNSIGNED_BYTE,
+        frame
+    )
 
-    if implot.begin_plot("Live Frame", size=(avail_width, avail_height)):
-        implot.setup_axes("X", "Y", static.flags, static.flags)
-        implot.plot_image("Frame", static.image_texture, (0, 0), (avail_width, avail_height))
+    avail_w, avail_h = imgui.get_content_region_avail()
+    if implot.begin_plot("Live Frame", size=(avail_w, avail_h)):
+        implot.setup_axes("X", "Y", implot.AxisFlags_.no_tick_labels, implot.AxisFlags_.no_tick_labels)
+        implot.plot_image(
+            "Frame", display_frames_tab.image_texture,
+            (0,0), (avail_w, avail_h)
+        )
         implot.end_plot()
 
 
