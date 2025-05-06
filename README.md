@@ -15,7 +15,7 @@ ROSplat is the first online ROS2-based visualizer that leverages Gaussian splatt
 Features
 --------
 
-*   **Real-Time Visualization:** Render millions of Gaussian “splats” in real time.
+*   **Real-Time Visualization:** Render millions of Gaussian "splats" in real time.
 *   **ROS2 Integration:** Built on ROS2 for online data exchange of Gaussians, Images, and IMU data.
 *   **Custom Gaussian Messages:** Uses custom message types (_SingleGaussian_ and _GaussianArray_) to encapsulate properties such as position, rotation, scale, opacity, and spherical harmonics.
 *   **CUDA and OpenGL Rendering:** Supports GPU-accelerated rendering using CUDA and OpenGL.
