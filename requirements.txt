@@ -1,5 +1,7 @@
 cupy-cuda12x==13.4.0
 torch
+torchvision
+torchaudio
 glfw==2.8.0
 imageio==2.37.0
 imgui-bundle==1.6.2
