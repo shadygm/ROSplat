@@ -23,7 +23,7 @@ Requirements:
 
 Usage:
     1. Run it (optionally passing in a path to the PLY file):
-         ./generate_gaussian_bag.py --ply_path /path/to/your_file.ply
+         python generate_gaussian_bag.py --ply_path /path/to/your_file.ply
     2. In a separate terminal, record the published data or visualize it using ROSplat:
          ros2 bag record /gaussian_test
 """
