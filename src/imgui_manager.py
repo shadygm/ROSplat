@@ -16,6 +16,16 @@ from imgui_bundle import (
 import ros_util
 import util
 from ros_util import ROSNodeManager
+try:
+    from CUDARenderer import CUDARenderer
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
+    util.logger.warning("CUDARenderer not available. CUDA rendering will be disabled.")
+    from base_gaussian_renderer import OpenGLRenderer
+    util.logger.info("Using OpenGL Renderer")
+
 
 # Global variables and settings
 world_settings = None
@@ -30,7 +40,6 @@ ros_node_manager = ROSNodeManager()
 accel_x, accel_y, accel_z = [], [], []
 gyro_x, gyro_y, gyro_z = [], [], []
 
-
 def take_screenshot(filename: str = "screenshot.png") -> None:
     """
     Captures the current OpenGL framebuffer and saves it as an image.
@@ -44,7 +53,6 @@ def take_screenshot(filename: str = "screenshot.png") -> None:
     image = image.transpose(Image.FLIP_TOP_BOTTOM)
     image.save(filename)
     util.logger.info(f"[Screenshot saved] {filename}")
-
 
 class CircularBuffer:
     def __init__(self, max_size: int = 2000) -> None:
@@ -63,7 +71,6 @@ class CircularBuffer:
             return self.data[:self.size]
         return np.roll(self.data, -self.offset)
 
-
 class ScrollingBuffer:
     def __init__(self, max_size: int = 2000) -> None:
         self.max_size = max_size
@@ -81,7 +88,6 @@ class ScrollingBuffer:
             return self.data[:self.size].T
         return np.roll(self.data, -self.offset).T
 
-
 @immapp.static(open_file_dialog=None)
 def load_file() -> None:
     """
@@ -98,6 +104,29 @@ def load_file() -> None:
             util.logger.error(f"Selected file is not a PLY file: {file[0]}")
         static.open_file_dialog = None
 
+def _renderer_settings() -> None:
+    imgui.text("Renderer:")
+    if HAS_TORCH and torch.cuda.is_available():
+        renderer_types = ["CUDA Renderer", "OpenGL Renderer"]
+        current_renderer_idx = 0 if isinstance(world_settings.gauss_renderer, CUDARenderer) else 1
+        changed, current_renderer_idx = imgui.combo("Renderer", current_renderer_idx, renderer_types)
+        if changed:
+            if renderer_types[current_renderer_idx] == "CUDA Renderer":
+                world_settings.switch_renderer("CUDA")
+            else:
+                world_settings.switch_renderer("OpenGL")
+    if not isinstance(world_settings.gauss_renderer, CUDARenderer):
+        imgui.text("OpenGL Renderer: Sorting needed.")
+        if imgui.button("Sort and Update"):
+            world_settings.gauss_renderer.sort_and_update()
+        _, world_settings.auto_sort = imgui.checkbox("Auto-sort", world_settings.auto_sort)
+        changed, mode = imgui.combo("Visualization Type", world_settings.render_mode, type_visualization)
+        if changed:
+            world_settings.update_render_mode(mode)
+        world_settings.update_render_mode(mode)
+    else:
+        imgui.text("CUDA Renderer: No sorting needed.")
+        world_settings.auto_sort = False
 
 def display_parameters_tab() -> None:
     """
@@ -113,14 +142,11 @@ def display_parameters_tab() -> None:
     if imgui.button("Screenshot"):
         take_screenshot(f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
     imgui.text("Parameters:")
-    if imgui.button("Sort and Update"):
-        world_settings.gauss_renderer.sort_and_update()
-    imgui.same_line()
-    _, world_settings.auto_sort = imgui.checkbox("Auto-sort", world_settings.auto_sort)
-    changed, mode = imgui.combo("Visualization Type", world_settings.render_mode, type_visualization)
-    if changed:
-        world_settings.update_render_mode(mode)
-
+    # make a check box that is for enabling/disabling overwriting of gaussians
+    _, world_settings.overwrite_gaussians = imgui.checkbox(
+        "Overwrite Gaussians", world_settings.overwrite_gaussians
+    )
+    _renderer_settings()
 
 @immapp.static(
     selected_topic="",
@@ -191,13 +217,11 @@ def display_ros_tab() -> None:
     if not is_valid_topic:
         imgui.end_disabled()
 
-
 def display_camera_tab() -> None:
     """
     Display the Camera Settings tab.
     """
     imgui.text("Camera settings go here.")
-
 
 @immapp.static(
     camera_pose=None,
@@ -248,7 +272,6 @@ def display_visualization_tab() -> None:
             implot3d.plot_line("Camera Pose", x_data, y_data, z_data)
         implot3d.end_plot()
 
-
 def create_texture_from_frame(frame: np.ndarray) -> int:
     """
     Creates an OpenGL texture from a NumPy frame.
@@ -271,7 +294,6 @@ def create_texture_from_frame(frame: np.ndarray) -> int:
     gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, fmt, width, height, 0, fmt, gl.GL_UNSIGNED_BYTE, frame)
     return tex
 
-
 def update_texture(tex: int, frame: np.ndarray) -> None:
     """
     Updates an existing OpenGL texture with new frame data.
@@ -284,7 +306,6 @@ def update_texture(tex: int, frame: np.ndarray) -> None:
     gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, width, height, fmt, gl.GL_UNSIGNED_BYTE, frame)
     gl.glFlush()
 
-
 @immapp.static(
     image_texture=None, 
     texture_width=0, 
@@ -293,40 +314,46 @@ def update_texture(tex: int, frame: np.ndarray) -> None:
     flags=implot.AxisFlags_.auto_fit | implot.AxisFlags_.no_tick_labels
 )
 def display_frames_tab() -> None:
-    """
-    Display the current ROS frame using an ImPlot-based visualization.
-    """
-    static = display_frames_tab
-
     try:
-        frame_to_show = frame_queue.get_nowait()
-        frame_queue.put(frame_to_show)  # Replace back for continuous viewing
+        frame = frame_queue.get_nowait()
+        # put it back so we keep showing it
+        frame_queue.put(frame)
     except queue.Empty:
-        frame_to_show = None
+        frame = None
 
-    if frame_to_show is None:
+    if frame is None:
         imgui.text("Waiting for frame...")
         return
 
-    height, width, channels = frame_to_show.shape
+    h, w, _ = frame.shape
 
-    if static.image_texture is None:
-        static.image_texture = create_texture_from_frame(frame_to_show)
-        static.texture_width = width
-        static.texture_height = height
-    else:
-        update_texture(static.image_texture, frame_to_show)
+    if display_frames_tab.image_texture is None:
+        # first time: create GL texture
+        display_frames_tab.image_texture = gl.glGenTextures(1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, display_frames_tab.image_texture)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+        display_frames_tab.texture_width = w
+        display_frames_tab.texture_height = h
 
-    avail_width, avail_height = imgui.get_content_region_avail()
-    changed, static.auto_fit = imgui.checkbox("Auto-fit", static.auto_fit)
-    if changed:
-        static.flags = implot.AxisFlags_.auto_fit | implot.AxisFlags_.no_tick_labels if static.auto_fit else implot.AxisFlags_.no_tick_labels
+    # Update texture with new frame
+    gl.glBindTexture(gl.GL_TEXTURE_2D, display_frames_tab.image_texture)
+    gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
+    gl.glTexImage2D(
+        gl.GL_TEXTURE_2D, 0, gl.GL_RGB,
+        w, h, 0,
+        gl.GL_RGB, gl.GL_UNSIGNED_BYTE,
+        frame
+    )
 
-    if implot.begin_plot("Live Frame", size=(avail_width, avail_height)):
-        implot.setup_axes("X", "Y", static.flags, static.flags)
-        implot.plot_image("Frame", static.image_texture, (0, 0), (avail_width, avail_height))
+    avail_w, avail_h = imgui.get_content_region_avail()
+    if implot.begin_plot("Live Frame", size=(avail_w, avail_h)):
+        implot.setup_axes("X", "Y", implot.AxisFlags_.no_tick_labels, implot.AxisFlags_.no_tick_labels)
+        implot.plot_image(
+            "Frame", display_frames_tab.image_texture,
+            (0,0), (avail_w, avail_h)
+        )
         implot.end_plot()
-
 
 def update_imu_queue(lin_accel: np.ndarray, ang_vel: np.ndarray) -> None:
     """
@@ -337,7 +364,6 @@ def update_imu_queue(lin_accel: np.ndarray, ang_vel: np.ndarray) -> None:
     except queue.Empty:
         pass
     imu_queue.put((lin_accel, ang_vel))
-
 
 def update_imu(lin_accel: np.ndarray, ang_vel: np.ndarray) -> None:
     """
@@ -353,7 +379,6 @@ def update_imu(lin_accel: np.ndarray, ang_vel: np.ndarray) -> None:
     gyro_x.append(ang_vel[0])
     gyro_y.append(ang_vel[1])
     gyro_z.append(ang_vel[2])
-
 
 @immapp.static(auto_fit_accel=True, auto_fit_gyro=True)
 def display_imu_tab() -> None:
@@ -392,7 +417,6 @@ def display_imu_tab() -> None:
             implot.plot_line("Gyro Y", xs, np.array(gyro_y, dtype=np.float32))
             implot.plot_line("Gyro Z", xs, np.array(gyro_z, dtype=np.float32))
         implot.end_plot()
-
 
 def set_gaussian(msg) -> None:
     """

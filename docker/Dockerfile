@@ -45,7 +45,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir --break-system-packages --ignore-installed -r requirements.txt
 
-
 # OpenGL & NVIDIA driver integration (Ubuntu 24.04, Driver 550)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglvnd-dev \

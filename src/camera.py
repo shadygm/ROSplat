@@ -37,11 +37,11 @@ class Camera:
         self.log = util.logger
 
         # Sensitivity factors
-        self.rot_sensitivity: float = 0.02
+        self.rot_sensitivity: float = 0.005
         self.trans_sensitivity: float = 0.01
         self.zoom_sensitivity: float = 0.08
         self.roll_sensitivity: float = 0.03  # Currently unused
-        self.target_dist: float = 3.0
+        self.target_dist: float = 1.0
 
     def process_translation(self, dx: float, dy: float, dz: float) -> None:
         """
@@ -98,22 +98,30 @@ class Camera:
 
     def _rotate_camera(self, xoffset: float, yoffset: float) -> None:
         """
-        Rotate the camera based on mouse input.
+        Rotate the view direction based on mouse movement (free-look style).
         """
-        self.yaw += xoffset * self.rot_sensitivity
+        self.yaw -= xoffset * self.rot_sensitivity
         self.pitch += yoffset * self.rot_sensitivity
-        self.pitch = np.clip(self.pitch, -np.pi / 2, np.pi / 2)
 
+        # Clamp pitch to avoid gimbal lock
+        epsilon = 1e-3
+        self.pitch = np.clip(self.pitch, -np.pi / 2 + epsilon, np.pi / 2 - epsilon)
+
+        # Calculate new direction vector
         front = np.array([
-            np.cos(self.yaw) * np.cos(self.pitch),
+            np.cos(self.pitch) * np.cos(self.yaw),
             np.sin(self.pitch),
-            np.sin(self.yaw) * np.cos(self.pitch)
-        ])
-        front = self._global_rot_mat() @ front.reshape(3, 1)
-        front = front.flatten()
-        distance = np.linalg.norm(self.position - self.target)
-        self.position = self.target - front * distance
+            np.cos(self.pitch) * np.sin(self.yaw)
+        ], dtype=np.float32)
+
+        front = front / np.linalg.norm(front)
+
+        # Update target based on the new view direction
+        self.target = self.position + front
+
         self.dirty_pose = True
+
+
 
     def _pan_camera(self, xoffset: float, yoffset: float) -> None:
         """
@@ -140,13 +148,11 @@ class Camera:
         return self.position
 
     def get_view_matrix(self) -> np.ndarray:
-        """
-        Compute and return the view matrix using glm.
-        """
-        pos = glm.vec3(*self.position)
-        tgt = glm.vec3(*self.target)
-        up_vec = glm.vec3(*self.up)
+        pos     = glm.vec3(*self.position)
+        tgt     = glm.vec3(*self.target)
+        up_vec  = glm.vec3(*self.up)
         return np.array(glm.lookAt(pos, tgt, up_vec))
+
 
     def get_project_matrix(self) -> np.ndarray:
         """
@@ -178,3 +184,14 @@ class Camera:
         z_axis /= np.linalg.norm(z_axis)
         x_axis = np.cross(self.up, z_axis)
         return np.stack([x_axis, self.up, z_axis], axis=-1)
+
+    def get_intrinsics_matrix(self) -> np.ndarray:
+        """
+        Compute and return the intrinsic camera matrix.
+        """
+        f = self.w / (2 * np.tan(self.fovy / 2))
+        return np.array([
+            [f, 0, self.w / 2],
+            [0, f, self.h / 2],
+            [0, 0, 1]
+        ], dtype=np.float32)
