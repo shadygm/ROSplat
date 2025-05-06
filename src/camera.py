@@ -37,11 +37,11 @@ class Camera:
         self.log = util.logger
 
         # Sensitivity factors
-        self.rot_sensitivity: float = 0.02
+        self.rot_sensitivity: float = 0.005
         self.trans_sensitivity: float = 0.01
         self.zoom_sensitivity: float = 0.08
         self.roll_sensitivity: float = 0.03  # Currently unused
-        self.target_dist: float = 3.0
+        self.target_dist: float = 1.0
 
     def process_translation(self, dx: float, dy: float, dz: float) -> None:
         """
@@ -98,26 +98,30 @@ class Camera:
 
     def _rotate_camera(self, xoffset: float, yoffset: float) -> None:
         """
-        Rotate the camera based on mouse input.
+        Rotate the view direction based on mouse movement (free-look style).
         """
-        self.yaw += xoffset * self.rot_sensitivity
+        self.yaw -= xoffset * self.rot_sensitivity
         self.pitch += yoffset * self.rot_sensitivity
+
+        # Clamp pitch to avoid gimbal lock
         epsilon = 1e-3
-        self.pitch = np.clip(self.pitch,
-                            -np.pi/2 + epsilon,
-                            np.pi/2 - epsilon)
+        self.pitch = np.clip(self.pitch, -np.pi / 2 + epsilon, np.pi / 2 - epsilon)
 
-
+        # Calculate new direction vector
         front = np.array([
-            np.cos(self.yaw) * np.cos(self.pitch),
+            np.cos(self.pitch) * np.cos(self.yaw),
             np.sin(self.pitch),
-            np.sin(self.yaw) * np.cos(self.pitch)
-        ])
-        front = self._global_rot_mat() @ front.reshape(3, 1)
-        front = front.flatten()
-        distance = np.linalg.norm(self.position - self.target)
-        self.position = self.target - front * distance
+            np.cos(self.pitch) * np.sin(self.yaw)
+        ], dtype=np.float32)
+
+        front = front / np.linalg.norm(front)
+
+        # Update target based on the new view direction
+        self.target = self.position + front
+
         self.dirty_pose = True
+
+
 
     def _pan_camera(self, xoffset: float, yoffset: float) -> None:
         """

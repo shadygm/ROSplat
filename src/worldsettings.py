@@ -39,11 +39,13 @@ class WorldSettings:
         self.brand_new: bool = False
 
         # Parameters.
-        self.time_scale: float = 0.1
+        self.time_scale: float = 5
         self.model_transform_speed: float = 100.0
         self.scale_modifier: float = 1.0
         self.render_mode: int = 7
         self.auto_sort: bool = False
+        self.inverse_movements: bool = False
+        self.overwrite_gaussians: bool = False
 
         # Transformation matrix (4x4 identity).
         self.model_transform = np.eye(4, dtype=np.float32)
@@ -59,13 +61,16 @@ class WorldSettings:
         self.model_transform = translation @ self.model_transform
         if self.gauss_renderer:
             self.gauss_renderer.set_model_matrix(self.model_transform)
-
+    
     def update_camera_pose(self) -> None:
         """
         Update the camera pose in the renderer.
         """
         if self.gauss_renderer:
             self.gauss_renderer.update_camera_pose()
+
+    def update_window_size(self, w: int, h: int) -> None:
+        self.gauss_renderer.set_render_resolution(w, h)
 
     def update_render_mode(self, mode: int) -> None:
         """
@@ -108,9 +113,13 @@ class WorldSettings:
         """
         Process a translation of the camera.
         """
+        if isinstance(self.gauss_renderer, CUDARenderer):  
+            dx *= -1
+            dy *= -1
+
         self.world_camera.process_translation(dx * self.time_scale,
-                                                dy * self.time_scale,
-                                                dz * self.time_scale)
+                            dy * self.time_scale,
+                            dz * self.time_scale)
 
     def get_num_gaussians(self) -> int:
         """
@@ -131,6 +140,26 @@ class WorldSettings:
         sh = np.array([gaussian.spherical_harmonics], dtype=np.float32)
         return GaussianData(xyz, rot, scale, opacity, sh)
 
+    def switch_renderer(self, type: str) -> None:
+        """
+        Switch between OpenGL and CUDA renderer.
+        """
+        type = type.lower()
+        if self.gauss_renderer:
+            self.gauss_renderer = None
+        if type == "cuda":  
+            if not HAS_TORCH or not torch.cuda.is_available():
+                util.logger.error("CUDA renderer not available.")
+                return
+            self.gauss_renderer = CUDARenderer(self.world_camera.w, self.world_camera.h, self)
+        elif type == "opengl":
+            self.gauss_renderer = OpenGLRenderer(self.world_camera.w, self.world_camera.h, self)
+        else:
+            util.logger.error(f"Unknown renderer type: {type}")
+            return
+
+        self.update_activated_render_state()
+
     def append_gaussian(self, gaussian: SingleGaussian) -> None:
         """
         Convert and add a SingleGaussian to the current gaussian set.
@@ -139,6 +168,14 @@ class WorldSettings:
             return
 
         new_gaussian = self.convert_gaussian(gaussian)
+
+        if self.overwrite_gaussians:
+            self.gaussian_set = new_gaussian
+            self.is_original = False
+            self.brand_new = True
+            self.have_new_gaussians = True
+            return
+
         if self.is_original:
             self.is_original = False
             self.brand_new = True
@@ -148,7 +185,9 @@ class WorldSettings:
             self.gaussian_set = gaussian_representation.combine_gaussians(
                 [self.gaussian_set, new_gaussian]
             )
+
         self.have_new_gaussians = True
+
 
     def append_gaussians(self, gaussians: GaussianArray) -> None:
         """
@@ -158,6 +197,14 @@ class WorldSettings:
             return
 
         new_gaussians = [self.convert_gaussian(g) for g in gaussians.gaussians]
+
+        if self.overwrite_gaussians:
+            self.gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
+            self.is_original = False
+            self.brand_new = True
+            self.have_new_gaussians = True
+            return
+
         if self.is_original:
             self.is_original = False
             self.brand_new = True
@@ -167,6 +214,7 @@ class WorldSettings:
             self.gaussian_set = gaussian_representation.combine_gaussians(
                 [self.gaussian_set] + new_gaussians
             )
+
         self.have_new_gaussians = True
 
     def reset_gaussians(self) -> None:
@@ -186,18 +234,21 @@ class WorldSettings:
         self.update_activated_render_state(full_update=True)
 
     def update_activated_render_state(self, full_update: bool = False) -> None:
-        """
-        Update the rendering state of the renderer with the current gaussian set.
-        """
         if not self.gauss_renderer:
             return
 
-        self.gauss_renderer.update_gaussian_data(self.gaussian_set, full_update=full_update)
-        self.gauss_renderer.sort_and_update()
+        if isinstance(self.gauss_renderer, CUDARenderer):
+            self.gauss_renderer.update_gaussian_data(self.gaussian_set, full_update=full_update)
+        else:
+            self.gauss_renderer.update_gaussian_data(self.gaussian_set, full_update=full_update)
+            if self.auto_sort:
+                self.gauss_renderer.sort_and_update()
+
         self.gauss_renderer.set_scale_modifier(self.scale_modifier)
         self.gauss_renderer.set_render_mode(self.render_mode - 4)
         self.gauss_renderer.set_model_matrix(self.model_transform)
         self.gauss_renderer.update_camera_pose()
         self.gauss_renderer.update_camera_intrin()
         self.gauss_renderer.set_render_resolution(self.world_camera.w, self.world_camera.h)
+
         self.have_new_gaussians = False

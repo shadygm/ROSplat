@@ -64,7 +64,7 @@ class InputHandler:
         """
         self.world_settings.world_camera.w = width
         self.world_settings.world_camera.h = height
-        self.world_settings.gauss_renderer.set_render_resolution(width, height)
+        self.world_settings.update_window_size(width, height)
 
     def check_inputs(self):
         """
