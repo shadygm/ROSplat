@@ -5,8 +5,8 @@ from camera import Camera
 from gaussian_interface.msg import SingleGaussian, GaussianArray
 import gaussian_representation
 from gaussian_representation import GaussianData
-from base_gaussian_renderer import OpenGLRenderer
-from CUDARenderer import CUDARenderer
+from renderer.OpenGLRenderer import OpenGLRenderer
+from renderer.CUDARenderer import CUDARenderer
 import util
 try:
     import torch

@@ -17,13 +17,13 @@ import ros_util
 import util
 from ros_util import ROSNodeManager
 try:
-    from CUDARenderer import CUDARenderer
+    from renderer.CUDARenderer import CUDARenderer
     import torch
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
     util.logger.warning("CUDARenderer not available. CUDA rendering will be disabled.")
-    from base_gaussian_renderer import OpenGLRenderer
+    from renderer.OpenGLRenderer import OpenGLRenderer
     util.logger.info("Using OpenGL Renderer")
 
 

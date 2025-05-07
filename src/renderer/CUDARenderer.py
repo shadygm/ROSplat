@@ -5,7 +5,7 @@ import torch
 from gsplat import rasterization
 from OpenGL import GL as gl
 import util
-from base_gaussian_renderer import GaussianRenderBase
+from renderer.base_gaussian_renderer import GaussianRenderBase
 from gaussian_representation import GaussianData
 
 class CUDARenderer(GaussianRenderBase):
@@ -175,7 +175,7 @@ void main() {
             sh_degree=self.sh_degree,
             packed=True,
             tile_size=16,
-            radius_clip=2.0,
+            radius_clip=0.5,
             sparse_grad=True,
             rasterize_mode="antialiased",
         )
