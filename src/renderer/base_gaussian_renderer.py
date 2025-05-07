@@ -39,5 +39,8 @@ class GaussianRenderBase:
     def set_model_matrix(self, model_mat) -> None:
         raise NotImplementedError()
 
+    def reset_gaussians(self) -> None:
+        raise NotImplementedError()
+
     def set_render_resolution(self, w: int, h: int) -> None:
         raise NotImplementedError()

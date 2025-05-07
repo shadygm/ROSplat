@@ -16,7 +16,7 @@ except ImportError:
     HAS_TORCH = False
 
 # Maximum number of Gaussians allowed in the scene.
-MAX_GAUSSIANS = 4_000_000
+MAX_GAUSSIANS = 50_000_000
 
 
 class WorldSettings:
@@ -131,16 +131,16 @@ class WorldSettings:
 
     def convert_gaussian(self, gaussian: SingleGaussian) -> GaussianData:
         """
-        Convert a ROS SingleGaussian message to GaussianData.
+        Convert a SingleGaussian message to a GaussianData instance.
         """
-        return GaussianData(
-            xyz=np.array([[gaussian.xyz.x, gaussian.xyz.y, gaussian.xyz.z]], dtype=np.float32),
-            rotation=np.array([[gaussian.rotation.x, gaussian.rotation.y,
-                                gaussian.rotation.z, gaussian.rotation.w]], dtype=np.float32),
-            scale=np.array([[gaussian.scale.x, gaussian.scale.y, gaussian.scale.z]], dtype=np.float32),
-            opacity=np.array([[gaussian.opacity]], dtype=np.float32),
-            sh=np.array([gaussian.spherical_harmonics], dtype=np.float32)
-        )
+        xyz = np.array([[gaussian.xyz.x, gaussian.xyz.y, gaussian.xyz.z]], dtype=np.float32)
+        rot = np.array([[gaussian.rotation.x, gaussian.rotation.y,
+                         gaussian.rotation.z, gaussian.rotation.w]], dtype=np.float32)
+        scale = np.array([[gaussian.scale.x, gaussian.scale.y, gaussian.scale.z]],
+                         dtype=np.float32)
+        opacity = np.array([[gaussian.opacity]], dtype=np.float32)
+        sh = np.array([gaussian.spherical_harmonics], dtype=np.float32)
+        return GaussianData(xyz, rot, scale, opacity, sh)
 
     def switch_renderer(self, type: str) -> None:
         """
@@ -187,12 +187,31 @@ class WorldSettings:
 
     def append_gaussians(self, gaussians: GaussianArray) -> None:
         """
-        Append multiple Gaussians to the current set.
+        Append multiple Gaussians to the current set, or directly forward them to the CUDA renderer.
         """
+        new_gaussians = [self.convert_gaussian(g) for g in gaussians.gaussians]
+        
+        if isinstance(self.gauss_renderer, CUDARenderer):
+            if self.overwrite_gaussians or self.is_original:
+                self.gauss_renderer.reset_gaussians()
+
+            if self.is_original:
+                self.gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
+                self.gauss_renderer.reset_gaussians()
+                self.is_original = False
+            else:
+                self.gaussian_set = gaussian_representation.combine_gaussians(
+                    [self.gaussian_set] + new_gaussians
+                )
+            
+            temp_gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
+                
+            self.gauss_renderer.add_gaussians_from_ros(temp_gaussian_set)
+            return
+
         if len(self.gaussian_set) >= MAX_GAUSSIANS:
             return
 
-        new_gaussians = [self.convert_gaussian(g) for g in gaussians.gaussians]
 
         if self.overwrite_gaussians or self.is_original:
             self.gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
@@ -205,6 +224,7 @@ class WorldSettings:
 
         self.brand_new = True
         self.have_new_gaussians = True
+
 
     def reset_gaussians(self) -> None:
         """

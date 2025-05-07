@@ -1,7 +1,8 @@
+# camera.py
+import math
 import numpy as np
 import glm
 import util
-
 
 class Camera:
     """
@@ -9,189 +10,132 @@ class Camera:
     """
 
     def __init__(self, height: int, width: int) -> None:
-        """
-        Initialize the Camera with screen dimensions.
-        """
-        self.h: int = height
-        self.w: int = width
-        self.znear: float = 0.01
-        self.zfar: float = 100.0
-        self.fovy: float = np.pi / 2
-        self.position: np.ndarray = np.array([0.0, 0.0, 3.0], dtype=np.float32)
-        self.target: np.ndarray = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        self.up: np.ndarray = np.array([0.0, -1.0, 0.0], dtype=np.float32)
-        self.yaw: float = -np.pi / 2
-        self.pitch: float = 0.0
+        self.h = height
+        self.w = width
+        self.znear = 0.01
+        self.zfar = 100.0
+        self.fovy = np.pi / 2
 
-        self.dirty_pose: bool = True
-        self.dirty_intrinsic: bool = True
+        # Position & orientation
+        self.position = np.array([0.0, 0.0, 3.0], dtype=np.float32)
+        self.target   = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        self.up       = np.array([0.0, -1.0, 0.0], dtype=np.float32)
 
-        self.last_x: float = 640
-        self.last_y: float = 360
+        # Euler angles
+        self.yaw   = -np.pi / 2
+        self.pitch = 0.0
 
-        self.first_mouse: bool = True
+        # Mouse state
+        self.first_mouse = True
+        self.last_x = width  / 2
+        self.last_y = height / 2
+        self.is_leftmouse_pressed  = False
+        self.is_rightmouse_pressed = False
 
-        self.is_leftmouse_pressed: bool = False
-        self.is_rightmouse_pressed: bool = False
+        # “Dirty” flags
+        self.dirty_pose      = True
+        self.dirty_intrinsic = True
+
+        # Sensitivities
+        self.rot_sensitivity  = 0.005
+        self.trans_sensitivity = 0.01
+        self.zoom_sensitivity  = 0.08
+        self.roll_sensitivity  = 0.03
 
         self.log = util.logger
 
-        # Sensitivity factors
-        self.rot_sensitivity: float = 0.005
-        self.trans_sensitivity: float = 0.01
-        self.zoom_sensitivity: float = 0.08
-        self.roll_sensitivity: float = 0.03  # Currently unused
-        self.target_dist: float = 1.0
-
     def process_translation(self, dx: float, dy: float, dz: float) -> None:
-        """
-        Process translation in the scene based on provided offsets.
-        """
-        front: np.ndarray = self.target - self.position
-        norm_front = np.linalg.norm(front)
-        if norm_front <= 0:
-            front = np.array([0.0, 0.0, 1.0])
-        else:
-            front = front / norm_front
-
-        right: np.ndarray = np.cross(front, self.up)
-        up: np.ndarray = np.cross(right, front)
-
-        move_direction: np.ndarray = front * dy + right * dx + self.up * dz
-        norm_move = np.linalg.norm(move_direction)
-        if norm_move > 0:
-            move_direction = move_direction / norm_move
-
-        self.position += move_direction * self.trans_sensitivity
-        self.target += move_direction * self.trans_sensitivity
+        front = self.target - self.position
+        norm = np.linalg.norm(front)
+        front = front / norm if norm>0 else np.array([0,0,1],dtype=np.float32)
+        right = np.cross(front, self.up)
+        move = front*dy + right*dx + self.up*dz
+        norm = np.linalg.norm(move)
+        if norm>0: move /= norm
+        self.position += move * self.trans_sensitivity
+        self.target   += move * self.trans_sensitivity
         self.dirty_pose = True
 
     def process_scroll(self, xoffset: float, yoffset: float) -> None:
-        """
-        Process zooming based on scroll input.
-        """
-        front: np.ndarray = self.target - self.position
-        front = front / np.linalg.norm(front)
+        front = self.target - self.position
+        front /= np.linalg.norm(front)
         delta = front * yoffset * self.zoom_sensitivity
         self.position += delta
-        self.target += delta
+        self.target   += delta
         self.dirty_pose = True
 
     def process_mouse(self, xpos: float, ypos: float) -> None:
-        """
-        Process mouse movement for camera rotation or panning.
-        """
         if self.first_mouse:
             self.last_x = xpos
             self.last_y = ypos
             self.first_mouse = False
 
-        xoffset = xpos - self.last_x
-        yoffset = self.last_y - ypos
+        dx = xpos - self.last_x
+        dy = self.last_y - ypos
         self.last_x = xpos
         self.last_y = ypos
 
         if self.is_leftmouse_pressed:
-            self._rotate_camera(xoffset, yoffset)
+            self._rotate_camera(dx, dy)
         if self.is_rightmouse_pressed:
-            self._pan_camera(xoffset, yoffset)
+            self._pan_camera(dx, dy)
 
-    def _rotate_camera(self, xoffset: float, yoffset: float) -> None:
-        """
-        Rotate the view direction based on mouse movement (free-look style).
-        """
-        self.yaw -= xoffset * self.rot_sensitivity
-        self.pitch += yoffset * self.rot_sensitivity
+    def _rotate_camera(self, dx: float, dy: float) -> None:
+        self.yaw   -= dx * self.rot_sensitivity
+        self.pitch += dy * self.rot_sensitivity
+        eps = 1e-3
+        self.pitch = np.clip(self.pitch, -np.pi/2+eps, np.pi/2-eps)
 
-        # Clamp pitch to avoid gimbal lock
-        epsilon = 1e-3
-        self.pitch = np.clip(self.pitch, -np.pi / 2 + epsilon, np.pi / 2 - epsilon)
-
-        # Calculate new direction vector
         front = np.array([
-            np.cos(self.pitch) * np.cos(self.yaw),
-            np.sin(self.pitch),
-            np.cos(self.pitch) * np.sin(self.yaw)
+            math.cos(self.pitch)*math.cos(self.yaw),
+            math.sin(self.pitch),
+            math.cos(self.pitch)*math.sin(self.yaw)
         ], dtype=np.float32)
-
-        front = front / np.linalg.norm(front)
-
-        # Update target based on the new view direction
+        front /= np.linalg.norm(front)
         self.target = self.position + front
-
         self.dirty_pose = True
 
-
-
-    def _pan_camera(self, xoffset: float, yoffset: float) -> None:
-        """
-        Pan the camera based on right mouse dragging.
-        """
+    def _pan_camera(self, dx: float, dy: float) -> None:
         front = self.target - self.position
-        front = front / np.linalg.norm(front)
+        front /= np.linalg.norm(front)
         right = np.cross(self.up, front)
-        pan_horizontal = right * xoffset * self.trans_sensitivity
-        self.position += pan_horizontal
-        self.target += pan_horizontal
-
-        cam_up = np.cross(right, front)
-        pan_vertical = cam_up * yoffset * self.trans_sensitivity
-        self.position += pan_vertical
-        self.target += pan_vertical
-
+        hor = right * dx * self.trans_sensitivity
+        vert = np.cross(right, front) * dy * self.trans_sensitivity
+        self.position += hor + vert
+        self.target   += hor + vert
         self.dirty_pose = True
 
-    def get_pose(self) -> np.ndarray:
+    def process_roll(self, direction: float) -> None:
         """
-        Get the current camera position.
+        Rotate 'up' around the view axis by ±1 * roll_sensitivity.
+        Positive direction -> CCW when looking from camera toward scene.
         """
-        return self.position
+        angle = direction * self.roll_sensitivity
+        front = self.target - self.position
+        front /= np.linalg.norm(front)
+        u = self.up
+        k = front
+        cosA = math.cos(angle)
+        sinA = math.sin(angle)
+        # Rodrigues' rotation of u around axis k
+        u_new = u*cosA + np.cross(k, u)*sinA + k*(np.dot(k, u))*(1-cosA)
+        self.up = u_new / np.linalg.norm(u_new)
+        self.dirty_pose = True
 
     def get_view_matrix(self) -> np.ndarray:
-        pos     = glm.vec3(*self.position)
-        tgt     = glm.vec3(*self.target)
-        up_vec  = glm.vec3(*self.up)
-        return np.array(glm.lookAt(pos, tgt, up_vec))
-
+        pos = glm.vec3(*self.position)
+        tgt = glm.vec3(*self.target)
+        upv = glm.vec3(*self.up)
+        return np.array(glm.lookAt(pos, tgt, upv), dtype=np.float32)
 
     def get_project_matrix(self) -> np.ndarray:
-        """
-        Compute and return the projection matrix.
-        """
-        proj = glm.perspective(
-            self.fovy,
-            self.w / self.h,
-            self.znear,
-            self.zfar
-        )
+        proj = glm.perspective(self.fovy, self.w/self.h, self.znear, self.zfar)
         return np.array(proj, dtype=np.float32)
 
-    def get_htanfovxy_focal(self) -> list:
-        """
-        Calculate tan(fovx/2), tan(fovy/2) and the focal length.
-        """
-        htany = np.tan(self.fovy / 2)
-        htanx = htany * (self.w / self.h)
-        focal = self.w / (2 * htanx) if htanx != 0 else 0
-        return [htanx, htany, focal]
-
-    def _global_rot_mat(self) -> np.ndarray:
-        """
-        Compute a global rotation matrix based on the camera's up vector.
-        """
-        x_axis = np.array([1, 0, 0], dtype=np.float32)
-        z_axis = np.cross(x_axis, self.up)
-        z_axis /= np.linalg.norm(z_axis)
-        x_axis = np.cross(self.up, z_axis)
-        return np.stack([x_axis, self.up, z_axis], axis=-1)
-
     def get_intrinsics_matrix(self) -> np.ndarray:
-        """
-        Compute and return the intrinsic camera matrix.
-        """
-        f = self.w / (2 * np.tan(self.fovy / 2))
+        f = self.w / (2 * math.tan(self.fovy/2))
         return np.array([
-            [f, 0, self.w / 2],
-            [0, f, self.h / 2],
+            [f, 0, self.w/2],
+            [0, f, self.h/2],
             [0, 0, 1]
         ], dtype=np.float32)

@@ -1,3 +1,4 @@
+# input_handler.py
 from imgui_bundle import glfw_utils, imgui
 import time
 import util
@@ -24,46 +25,32 @@ class InputHandler:
         self.log.info("Initializing callbacks")
     
     def mouse_button_callback(self, window, button, action, mods):
-        """
-        Handle mouse button press events.
-        """
         io = imgui.get_io()
         pressed = action == glfw_utils.glfw.PRESS
         io.add_mouse_button_event(button, pressed)
-        
-        # Process application logic only if ImGui does not capture the mouse.
         if not io.want_capture_mouse:
+            cam = self.world_settings.world_camera
             if button == glfw_utils.glfw.MOUSE_BUTTON_LEFT:
-                self.world_settings.world_camera.is_leftmouse_pressed = pressed
+                cam.is_leftmouse_pressed = pressed
             elif button == glfw_utils.glfw.MOUSE_BUTTON_RIGHT:
-                self.world_settings.world_camera.is_rightmouse_pressed = pressed
+                cam.is_rightmouse_pressed = pressed
 
     def cursor_pos_callback(self, window, xpos, ypos):
-        """
-        Handle mouse move events.
-        """
         io = imgui.get_io()
         io.add_mouse_pos_event(xpos, ypos)
-        
         if not io.want_capture_mouse:
             self.world_settings.world_camera.process_mouse(xpos, ypos)
 
     def scroll_callback(self, window, xoffset, yoffset):
-        """
-        Handle scroll events.
-        """
         io = imgui.get_io()
         io.add_mouse_wheel_event(xoffset, yoffset)
-        
         if not io.want_capture_mouse:
             self.world_settings.world_camera.process_scroll(xoffset, yoffset)
 
     def window_resize_callback(self, window, width, height):
-        """
-        Handle window resize events.
-        """
-        self.world_settings.world_camera.w = width
-        self.world_settings.world_camera.h = height
+        cam = self.world_settings.world_camera
+        cam.w = width
+        cam.h = height
         self.world_settings.update_window_size(width, height)
 
     def check_inputs(self):
@@ -77,47 +64,43 @@ class InputHandler:
         self._process_keyboard_input(delta)
 
     def _process_keyboard_input(self, delta):
-        """
-        Process all keyboard inputs, splitting between view and model transformations.
-        """
         io = imgui.get_io()
         if io.want_capture_keyboard:
             return
 
         self._process_view_translations(delta)
+        self._process_view_rotations(delta)
         self._process_model_translations(delta)
 
     def _process_view_translations(self, delta):
         """
-        Process camera (world) translations.
+        WASD + space/shift for moving the camera.
         """
-        view_translation_keys = {
-            glfw_utils.glfw.KEY_W: (0, delta, 0),         # Forward
-            glfw_utils.glfw.KEY_A: (-delta, 0, 0),         # Left
-            glfw_utils.glfw.KEY_S: (0, -delta, 0),         # Backward
-            glfw_utils.glfw.KEY_D: (delta, 0, 0),          # Right
-            glfw_utils.glfw.KEY_SPACE: (0, 0, delta),       # Up
-            glfw_utils.glfw.KEY_LEFT_SHIFT: (0, 0, -delta)  # Down
+        keys = {
+            glfw_utils.glfw.KEY_W: (0,  delta, 0),
+            glfw_utils.glfw.KEY_S: (0, -delta, 0),
+            glfw_utils.glfw.KEY_A: (-delta, 0,  0),
+            glfw_utils.glfw.KEY_D: ( delta, 0,  0),
+            glfw_utils.glfw.KEY_SPACE:      (0, 0,  delta),
+            glfw_utils.glfw.KEY_LEFT_SHIFT: (0, 0, -delta),
         }
-
-        for key, translation in view_translation_keys.items():
+        for key, (dx, dy, dz) in keys.items():
             if glfw_utils.glfw.get_key(self.window, key) == glfw_utils.glfw.PRESS:
-                self.world_settings.process_translation(*translation)
+                self.world_settings.process_translation(dx, dy, dz)
+
+    def _process_view_rotations(self, delta):
+        """
+        Q/E to roll the camera ccw/cw around its view axis.
+        """
+        win = self.window
+        cam = self.world_settings.world_camera
+        if glfw_utils.glfw.get_key(win, glfw_utils.glfw.KEY_Q) == glfw_utils.glfw.PRESS:
+            cam.process_roll(+1)
+        if glfw_utils.glfw.get_key(win, glfw_utils.glfw.KEY_E) == glfw_utils.glfw.PRESS:
+            cam.process_roll(-1)
 
     def _process_model_translations(self, delta):
         """
-        Process model translations.
+        Stub for model movement (IJKL).
         """
-        # TODO: Re-enable when model translation is implemented
-        
-        # model_translation_keys = {
-        #     glfw_utils.glfw.KEY_I: (0, -delta),  # Model forward
-        #     glfw_utils.glfw.KEY_J: (delta, 0),   # Model left
-        #     glfw_utils.glfw.KEY_K: (0, delta),   # Model backward
-        #     glfw_utils.glfw.KEY_L: (-delta, 0)   # Model right
-        # }
-
-        # for key, translation in model_translation_keys.items():
-        #     if glfw_utils.glfw.get_key(self.window, key) == glfw_utils.glfw.PRESS:
-        #         self.world_settings.process_model_translation(*translation)
         pass
