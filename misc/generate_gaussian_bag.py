@@ -156,7 +156,7 @@ class GaussianPublisher(Node):
         )
         
         # Create a timer that calls publish_array every 1/30 seconds (30 Hz).
-        self.timer = self.create_timer(1 / 100.0, self.publish_array)
+        self.timer = self.create_timer(1 / 30.0, self.publish_array)
 
     def publish_array(self):
         """Publish a GaussianArray containing a batch of 1000 SingleGaussian messages."""
