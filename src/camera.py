@@ -122,11 +122,14 @@ class Camera:
         self.up = u_new / np.linalg.norm(u_new)
         self.dirty_pose = True
 
-    def get_view_matrix(self) -> np.ndarray:
+    def get_view_matrix_glm(self) -> np.ndarray:
+        """
+        Compute and return the view matrix using glm.
+        """
         pos = glm.vec3(*self.position)
         tgt = glm.vec3(*self.target)
-        upv = glm.vec3(*self.up)
-        return np.array(glm.lookAt(pos, tgt, upv), dtype=np.float32)
+        up_vec = glm.vec3(*self.up)
+        return np.array(glm.lookAt(pos, tgt, up_vec))
 
     def get_project_matrix(self) -> np.ndarray:
         proj = glm.perspective(self.fovy, self.w/self.h, self.znear, self.zfar)
@@ -139,3 +142,42 @@ class Camera:
             [0, f, self.h/2],
             [0, 0, 1]
         ], dtype=np.float32)
+    
+    def get_view_matrix(self) -> np.ndarray:
+        """Returns the 4x4 view matrix using look-at."""
+        front = self.target - self.position
+        front = front / np.linalg.norm(front)
+        up = self.up / np.linalg.norm(self.up)
+        side = np.cross(front, up)
+        side = side / np.linalg.norm(side)
+        up = np.cross(side, front)
+
+        view = np.eye(4, dtype=np.float32)
+        view[0, :3] = side
+        view[1, :3] = up
+        view[2, :3] = -front
+        view[:3, 3] = -view[:3, :3] @ self.position
+        return view
+
+    def get_project_matrix(self) -> np.ndarray:
+        """
+        Compute and return the projection matrix.
+        """
+        proj = glm.perspective(
+            self.fovy,
+            self.w / self.h,
+            self.znear,
+            self.zfar
+        )
+        return np.array(proj, dtype=np.float32)
+
+    def get_htanfovxy_focal(self) -> list:
+        """
+        Calculate tan(fovx/2), tan(fovy/2) and the focal length.
+        """
+        htany = np.tan(self.fovy / 2)
+        htanx = htany * (self.w / self.h)
+        focal = self.w / (2 * htanx) if htanx != 0 else 0
+        return [htanx, htany, focal]
+
+

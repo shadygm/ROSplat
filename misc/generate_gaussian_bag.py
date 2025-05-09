@@ -152,52 +152,57 @@ class GaussianPublisher(Node):
         self.total = len(self.gaussian_data)
         self.batch_size = 1000
         self.get_logger().info(
-            f"Loaded {self.total} gaussians. Publishing GaussianArray with {self.batch_size} gaussians every 0.1 seconds."
+            f"Loaded {self.total} gaussians. Publishing GaussianArray with {self.batch_size} gaussians at 30 Hz."
         )
         
-        # Create a timer that calls publish_array every 0.1 seconds.
-        self.timer = self.create_timer(0.1, self.publish_array)
+        # Create a timer that calls publish_array every 1/30 seconds (30 Hz).
+        self.timer = self.create_timer(1 / 100.0, self.publish_array)
 
     def publish_array(self):
         """Publish a GaussianArray containing a batch of 1000 SingleGaussian messages."""
+        import time  # Import time module for timing
+        start_time = time.time()  # Start timing
+
         array_msg = GaussianArray()
         
-        # Create 1000 SingleGaussian messages.
+        # Preallocate the GaussianArray message with the required size.
+        array_msg.gaussians = [SingleGaussian() for _ in range(self.batch_size)]
+
+        # Populate the GaussianArray message.
         for i in range(self.batch_size):
             curr_idx = (self.idx + i) % self.total
-            single_msg = SingleGaussian()
+            single_msg = array_msg.gaussians[i]
+            
             # Set position.
-            single_msg.xyz = Point(
-                x=float(self.gaussian_data.xyz[curr_idx, 0]),
-                y=float(self.gaussian_data.xyz[curr_idx, 1]),
-                z=float(self.gaussian_data.xyz[curr_idx, 2])
-            )
+            single_msg.xyz.x = float(self.gaussian_data.xyz[curr_idx, 0])
+            single_msg.xyz.y = float(self.gaussian_data.xyz[curr_idx, 1])
+            single_msg.xyz.z = float(self.gaussian_data.xyz[curr_idx, 2])
+            
             # Set rotation (quaternion).
-            single_msg.rotation = Quaternion(
-                x=float(self.gaussian_data.rot[curr_idx, 0]),
-                y=float(self.gaussian_data.rot[curr_idx, 1]),
-                z=float(self.gaussian_data.rot[curr_idx, 2]),
-                w=float(self.gaussian_data.rot[curr_idx, 3])
-            )
+            single_msg.rotation.x = float(self.gaussian_data.rot[curr_idx, 0])
+            single_msg.rotation.y = float(self.gaussian_data.rot[curr_idx, 1])
+            single_msg.rotation.z = float(self.gaussian_data.rot[curr_idx, 2])
+            single_msg.rotation.w = float(self.gaussian_data.rot[curr_idx, 3])
+            
             # Set opacity.
             single_msg.opacity = float(self.gaussian_data.opacity[curr_idx, 0])
-            # Set scale.
-            single_msg.scale = Vector3(
-                x=float(self.gaussian_data.scale[curr_idx, 0]),
-                y=float(self.gaussian_data.scale[curr_idx, 1]),
-                z=float(self.gaussian_data.scale[curr_idx, 2])
-            )
-            # Set spherical harmonics.
-            sh_coeffs = self.gaussian_data.sh[curr_idx]
-            single_msg.spherical_harmonics = [float(val) for val in sh_coeffs]
             
-            array_msg.gaussians.append(single_msg)
+            # Set scale.
+            single_msg.scale.x = float(self.gaussian_data.scale[curr_idx, 0])
+            single_msg.scale.y = float(self.gaussian_data.scale[curr_idx, 1])
+            single_msg.scale.z = float(self.gaussian_data.scale[curr_idx, 2])
+            
+            # Set spherical harmonics.
+            single_msg.spherical_harmonics = self.gaussian_data.sh[curr_idx].tolist()
         
         # Advance the index by batch_size.
         self.idx = (self.idx + self.batch_size) % self.total
         
+        serialization_time = time.time() - start_time  # Calculate serialization time
+        self.get_logger().info(f"Serialization took {serialization_time:.6f} seconds.")
+
         self.publisher_.publish(array_msg)
-        self.get_logger().info(f"Published GaussianArray with {len(array_msg.gaussians)} gaussians.")
+        # self.get_logger().info(f"Published GaussianArray with {len(array_msg.gaussians)} gaussians.")
 
 def main(args=None):
     parser = argparse.ArgumentParser(
