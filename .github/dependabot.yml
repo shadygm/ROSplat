@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    target-branch: "main"
+    labels:
+      - "type:chore"
+      - "prio:low"
+      - "status:review"
+    reviewers:
+      - "shadygm"
+    assignees:
+      - "shadygm"
+    groups:
+      github-actions:
+        patterns:
+          - "*"

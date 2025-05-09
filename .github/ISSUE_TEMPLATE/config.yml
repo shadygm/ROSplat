@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: ❓ Q&A
+    url: https://github.com/shadygm/ROSplat/discussions/categories/q-a
+    about: Please use GitHub Discussions for questions, help requests, and general chat
+  - name: 📸 ROSplat Showcase
+    url: https://github.com/shadygm/ROSplat/discussions/categories/showcase
+    about: Check out the showcase to see how others are using ROSplat

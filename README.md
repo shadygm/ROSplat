@@ -42,6 +42,7 @@ To install the optional GPU-based libraries individually:
     pip install git+https://github.com/nerfstudio-project/gsplat.git # Install gsplat for CUDA-based rendering
 The program will automatically prioritize sorting methods in the following order: **1) Torch → 2) Cupy → 3) CPU**
 
+
 To install all dependencies at once:
 
     pip install -r requirements.txt        # For GPU acceleration
@@ -68,6 +69,12 @@ Then, to build and run the Docker container:
 **Important:** Ensure the host machine's CUDA version matches the version specified in the Dockerfile. If you are using a CUDA version other than 12.6, update the Dockerfile accordingly.
 
 > **Note:** If you require CUDA-based rendering, you must install the `gsplat` library manually within the container after it is launched.
+
+Additionally, ensure you specify your GPU architecture under the `TORCH_CUDA_ARCH_LIST` variable in the Dockerfile. This is necessary for proper compilation of CUDA-based libraries. For example, if your GPU architecture is `8.6`, update the Dockerfile as follows:
+
+    ENV TORCH_CUDA_ARCH_LIST="8.6"
+
+Refer to [NVIDIA's CUDA GPU support matrix](https://developer.nvidia.com/cuda-gpus) to find the correct architecture for your GPU.
 
 #### Accessing ROSplat Inside the Container
 
@@ -125,13 +132,17 @@ To test visualizing Gaussians over ROS2 messages:
 
 *   **Terminal 1:** Run the visualizer:
 
+    ```bash
     cd projects/ROSplat/src
     python3 main.py
+    ```
 
 *   **Terminal 2:** Publish Gaussian data:
 
+    ```bash
     cd projects/ROSplat/misc
     python3 generate_gaussian_bag.py --ply_path ../data/your_file.ply
+    ```
 
 The `generate_gaussian_bag.py` script will continuously publish batches of Gaussian messages to the `/gaussian_test` topic, which the visualizer will display in real time whenever you are subscribed to it.
 

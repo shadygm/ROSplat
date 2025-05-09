@@ -2,9 +2,8 @@ from OpenGL import GL as gl
 import numpy as np
 import util
 import sys
-
+from renderer.base_gaussian_renderer import GaussianRenderBase
 wglSwapIntervalEXT = None
-
 
 # ---------------- Sorting Strategies ----------------
 
@@ -24,33 +23,7 @@ class CPUSorter(GaussianSorterBase):
         depth = xyz_view[:, 2, 0]
         index = np.argsort(depth).astype(np.int32).reshape(-1, 1)
         return index
-
-
-class CupySorter(GaussianSorterBase):
-    def __init__(self):
-        self._buffer_xyz = None
-        self._buffer_gausid = None
-
-    def sort(self, gaussian_set, view_mat: np.ndarray, force_update: bool = False) -> np.ndarray:
-        import cupy as cp
-        if gaussian_set is None or len(gaussian_set) == 0:
-            util.logger.error("Gaussian data not loaded")
-            return np.empty((0, 1), dtype=np.int32)
-        if (
-            self._buffer_gausid != id(gaussian_set)
-            or self._buffer_xyz is None
-            or self._buffer_xyz.shape[0] != len(gaussian_set)
-            or force_update
-        ):
-            self._buffer_xyz = cp.asarray(gaussian_set.xyz)
-            self._buffer_gausid = id(gaussian_set)
-        view_mat_cp = cp.asarray(view_mat)
-        xyz_view = view_mat_cp[None, :3, :3] @ self._buffer_xyz[..., None] + view_mat_cp[None, :3, 3, None]
-        depth = xyz_view[:, 2, 0]
-        index = cp.argsort(depth).astype(cp.int32).reshape(-1, 1)
-        return cp.asnumpy(index)
-
-
+    
 class TorchSorter(GaussianSorterBase):
     def __init__(self):
         self._buffer_xyz = None
@@ -95,53 +68,30 @@ def get_sorter() -> GaussianSorterBase:
 
 _sort_gaussian = get_sorter()
 
-
-# ---------------- Renderer Classes ----------------
-
-class GaussianRenderBase:
+class CupySorter(GaussianSorterBase):
     def __init__(self):
-        self.gaussians = None  # Expected to be a GaussianSet instance
-        self._reduce_updates = True
+        self._buffer_xyz = None
+        self._buffer_gausid = None
 
-    @property
-    def reduce_updates(self) -> bool:
-        return self._reduce_updates
-
-    @reduce_updates.setter
-    def reduce_updates(self, val: bool):
-        self._reduce_updates = val
-        self.update_vsync()
-
-    def update_vsync(self) -> None:
-        print("VSync is not supported")
-
-    def update_gaussian_data(self, gaussian_set, full_update: bool = False) -> None:
-        raise NotImplementedError()
-
-    def sort_and_update(self) -> None:
-        raise NotImplementedError()
-
-    def set_scale_modifier(self, modifier: float) -> None:
-        raise NotImplementedError()
-
-    def set_render_mode(self, mod: int) -> None:
-        raise NotImplementedError()
-
-    def update_camera_pose(self) -> None:
-        raise NotImplementedError()
-
-    def update_camera_intrin(self) -> None:
-        raise NotImplementedError()
-
-    def draw(self) -> None:
-        raise NotImplementedError()
-
-    def set_model_matrix(self, model_mat) -> None:
-        raise NotImplementedError()
-
-    def set_render_resolution(self, w: int, h: int) -> None:
-        raise NotImplementedError()
-
+    def sort(self, gaussian_set, view_mat: np.ndarray, force_update: bool = False) -> np.ndarray:
+        import cupy as cp
+        if gaussian_set is None or len(gaussian_set) == 0:
+            util.logger.error("Gaussian data not loaded")
+            return np.empty((0, 1), dtype=np.int32)
+        if (
+            self._buffer_gausid != id(gaussian_set)
+            or self._buffer_xyz is None
+            or self._buffer_xyz.shape[0] != len(gaussian_set)
+            or force_update
+        ):
+            self._buffer_xyz = cp.asarray(gaussian_set.xyz)
+            self._buffer_gausid = id(gaussian_set)
+        view_mat_cp = cp.asarray(view_mat)
+        xyz_view = view_mat_cp[None, :3, :3] @ self._buffer_xyz[..., None] + view_mat_cp[None, :3, 3, None]
+        depth = xyz_view[:, 2, 0]
+        index = cp.argsort(depth).astype(cp.int32).reshape(-1, 1)
+        return cp.asnumpy(index)
+    
 
 class OpenGLRenderer(GaussianRenderBase):
     def __init__(self, w: int, h: int, world_settings):
@@ -209,7 +159,7 @@ class OpenGLRenderer(GaussianRenderBase):
 
         camera = self.world_settings.world_camera
         time_start = util.get_time()
-        index = _sort_gaussian.sort(self.gaussians, camera.get_view_matrix(), force_update=True)
+        index = _sort_gaussian.sort(self.gaussians, camera.get_view_matrix_glm(), force_update=True)
         time_end = util.get_time()
         util.logger.debug(f"Sorting time: {time_end - time_start:.3f} s")
 
@@ -232,7 +182,7 @@ class OpenGLRenderer(GaussianRenderBase):
 
     def update_camera_pose(self) -> None:
         camera = self.world_settings.world_camera
-        view_mat = camera.get_view_matrix()
+        view_mat = camera.get_view_matrix_glm()
         util.set_uniform_mat4(self.program, view_mat, "view_matrix")
         util.set_uniform_v3(self.program, camera.position, "cam_pos")
 
@@ -246,6 +196,7 @@ class OpenGLRenderer(GaussianRenderBase):
         util.set_uniform_mat4(self.program, model_mat, "model_matrix")
 
     def draw(self) -> None:
+        util.logger.info("Drawing gaussians")
         if self.gaussians is None or len(self.gaussians) == 0:
             return
         gl.glUseProgram(self.program)
