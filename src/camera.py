@@ -64,6 +64,9 @@ class Camera:
         self.target   += delta
         self.dirty_pose = True
 
+    def get_pose(self) -> np.ndarray:
+        return self.position
+
     def process_mouse(self, xpos: float, ypos: float) -> None:
         if self.first_mouse:
             self.last_x = xpos

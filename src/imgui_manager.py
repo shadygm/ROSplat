@@ -220,7 +220,7 @@ def display_camera_tab() -> None:
 )
 def display_visualization_tab() -> None:
     """
-    Visualizes camera pose over time.
+    Visualizes camera pose over time with auto-zoom enabled.
     """
     static = display_visualization_tab
     if static.camera_pose is None:
@@ -244,11 +244,8 @@ def display_visualization_tab() -> None:
             static.data_y.add_point(y)
             static.data_z.add_point(z)
 
-        flags = implot3d.AxisFlags_.no_tick_labels | implot3d.AxisFlags_.auto_fit
+        flags = implot3d.AxisFlags_.auto_fit
         implot3d.setup_axes("Z", "X", "Y", flags, flags, flags)
-        implot3d.setup_axis_limits(implot3d.ImAxis3D_.x.value, -1, 1, implot3d.Cond_.always)
-        implot3d.setup_axis_limits(implot3d.ImAxis3D_.y.value, -1, 1, implot3d.Cond_.once)
-        implot3d.setup_axis_limits(implot3d.ImAxis3D_.z.value, -1, 1, implot3d.Cond_.once)
 
         if len(static.data_x.get_data()) > 0:
             implot3d.plot_line("Camera Pose", static.data_x.get_data(), static.data_y.get_data(), static.data_z.get_data())
