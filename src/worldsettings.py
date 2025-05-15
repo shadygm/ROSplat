@@ -93,6 +93,12 @@ class WorldSettings:
         """
         return self.world_camera.get_pose()
 
+    def refresh_gaussians(self) -> None:
+        # Set to empty list of gaussians
+        self.gaussian_set = None
+        util.logger.info("Gaussians refreshed.")
+        self.have_new_gaussians = True
+
     def create_gaussian_renderer(self) -> None:
         """
         Initialize the appropriate Gaussian renderer (CUDA or OpenGL).
@@ -205,7 +211,6 @@ class WorldSettings:
                 )
             
             temp_gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
-                
             self.gauss_renderer.add_gaussians_from_ros(temp_gaussian_set)
             return
 

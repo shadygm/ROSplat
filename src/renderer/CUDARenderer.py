@@ -118,6 +118,15 @@ class CUDARenderer(GaussianRenderBase):
     def update_gaussian_data(self, gaussian_set: GaussianData, full_update: bool = False) -> None:
         if gaussian_set is None or len(gaussian_set) == 0:
             util.logger.error("Gaussian data not loaded")
+            # Set everything to empty
+            with self._data_lock:
+                self.means = None
+                self.quats = None
+                self.scales = None
+                self.opacities = None
+                self.colors = None
+                self.sh_degree = None
+            util.logger.info("Cleared Gaussian data")
             return
 
         # Build new tensors
@@ -130,6 +139,7 @@ class CUDARenderer(GaussianRenderBase):
         K = total_sh // 3
         sh_deg = int(math.sqrt(K) - 1)
         colors_np = gaussian_set.sh.astype(np.float32).reshape(-1, K, 3)
+
         colors = torch.from_numpy(colors_np).to(self.device)
 
         # Atomically replace main data and clear cache
@@ -149,28 +159,48 @@ class CUDARenderer(GaussianRenderBase):
 
     def add_gaussians_from_ros(self, gaussian_set: GaussianData) -> None:
         """
-        Enqueue new Gaussians into a cache; they will be
-        merged into the main data only when write_through()
-        is called (before each draw).
+        Immediately append new Gaussians to the main tensors in GPU memory.
+        This bypasses the deferred cache system for low-latency, high-throughput updates.
         """
-        new_means  = torch.from_numpy(gaussian_set.xyz.astype(np.float32)).to(self.device)
-        new_quats  = torch.from_numpy(gaussian_set.rot.astype(np.float32)).to(self.device)
-        new_scales = torch.from_numpy(gaussian_set.scale.astype(np.float32)).to(self.device)
-        new_opacs  = torch.from_numpy(gaussian_set.opacity.astype(np.float32).squeeze()).to(self.device)
+        if gaussian_set is None or len(gaussian_set) == 0:
+            util.logger.error("Gaussian data not loaded")
+            return
+
+        # Convert to torch tensors
+        means = torch.from_numpy(gaussian_set.xyz.astype(np.float32)).to(self.device)
+        quats = torch.from_numpy(gaussian_set.rot.astype(np.float32)).to(self.device)
+        scales = torch.from_numpy(gaussian_set.scale.astype(np.float32)).to(self.device)
+        opacs = torch.from_numpy(gaussian_set.opacity.astype(np.float32).squeeze()).to(self.device)
 
         total_sh = gaussian_set.sh_dim
-        k = total_sh // 3
-        sh_deg = int(math.sqrt(k) - 1)
-        colors_np = gaussian_set.sh.astype(np.float32).reshape(-1, k, 3)
-        new_colors = torch.from_numpy(colors_np).to(self.device)
+
+        total_sh = gaussian_set.sh_dim
+        K = total_sh // 3
+        sh_deg = int(math.sqrt(K) - 1)
+        colors_np = gaussian_set.sh.astype(np.float32).reshape(-1, K, 3)
+
+        colors = torch.from_numpy(colors_np).to(self.device)
 
         with self._data_lock:
-            self._cache_means.append(new_means)
-            self._cache_quats.append(new_quats)
-            self._cache_scales.append(new_scales)
-            self._cache_opacs.append(new_opacs)
-            self._cache_colors.append(new_colors)
-            self._cache_sh_deg = sh_deg
+            if self.means is None:
+                # First initialization
+                self.means     = means
+                self.quats     = quats
+                self.scales    = scales
+                self.opacities = opacs
+                self.colors    = colors
+            else:
+                # Append in-place
+                self.means     = torch.cat([self.means,     means],  dim=0)
+                self.quats     = torch.cat([self.quats,     quats],  dim=0)
+                self.scales    = torch.cat([self.scales,    scales], dim=0)
+                self.opacities = torch.cat([self.opacities, opacs],  dim=0)
+                self.colors    = torch.cat([self.colors,    colors], dim=0)
+
+            if total_sh % 3 == 0:
+                self.sh_degree = int(math.sqrt(total_sh // 3) - 1)
+        # Print total length
+        util.logger.info(f"Total Gaussians: {len(self.means)}")
 
     def write_through(self) -> None:
         """
@@ -261,7 +291,6 @@ class CUDARenderer(GaussianRenderBase):
                 self.opacities, self.colors,
                 self.viewmats, self.Ks
             )):
-                util.logger.error("Gaussian data not loaded")
                 return
 
             means, quats, scales = self.means, self.quats, self.scales
@@ -276,8 +305,8 @@ class CUDARenderer(GaussianRenderBase):
             viewmats=viewmats, Ks=Ks,
             width=w, height=h,
             sh_degree=sh_deg,
-            packed=True, tile_size=32,
-            radius_clip=0.5, sparse_grad=True,
+            packed=True, tile_size=16, 
+            sparse_grad=True,
             rasterize_mode="antialiased",
         )
         img  = torch.cat([colors_out, alphas], dim=-1)[0]

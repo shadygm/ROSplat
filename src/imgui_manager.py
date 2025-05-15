@@ -148,7 +148,9 @@ def display_parameters_tab() -> None:
     if imgui.button("Screenshot"):
         take_screenshot(f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
     imgui.text("Parameters:")
-    _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
+    # TODO: Add more parameters for the CUDA renderer. 
+    # Currently, only the OpenGL has parameters.
+    # _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
     _renderer_settings()
 
 
@@ -284,6 +286,12 @@ def update_texture(tex: int, frame: np.ndarray) -> None:
     fmt = gl.GL_RGB if c == 3 else gl.GL_RGBA
     gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, w, h, fmt, gl.GL_UNSIGNED_BYTE, frame)
     gl.glFlush()
+
+def refresh() -> None:
+    """
+    Refresh the current set of Gaussians.
+    """
+    world_settings.refresh_gaussians()
 
 
 @immapp.static(image_texture=None, last_frame=None)

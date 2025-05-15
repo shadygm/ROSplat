@@ -39,7 +39,7 @@ class InputHandler:
         io = imgui.get_io()
         io.add_mouse_pos_event(xpos, ypos)
         if not io.want_capture_mouse:
-            self.world_settings.world_camera.process_mouse(xpos, ypos)
+            self.world_settings.world_camera.process_mouse(-xpos, -ypos)
 
     def scroll_callback(self, window, xoffset, yoffset):
         io = imgui.get_io()
@@ -77,12 +77,12 @@ class InputHandler:
         WASD + space/shift for moving the camera.
         """
         keys = {
-            glfw_utils.glfw.KEY_W: (0,  delta, 0),
-            glfw_utils.glfw.KEY_S: (0, -delta, 0),
-            glfw_utils.glfw.KEY_A: (-delta, 0,  0),
-            glfw_utils.glfw.KEY_D: ( delta, 0,  0),
-            glfw_utils.glfw.KEY_SPACE:      (0, 0,  delta),
-            glfw_utils.glfw.KEY_LEFT_SHIFT: (0, 0, -delta),
+            glfw_utils.glfw.KEY_W: (0,  delta * 50, 0),
+            glfw_utils.glfw.KEY_S: (0, -delta * 50, 0),
+            glfw_utils.glfw.KEY_A: (-delta * 50, 0,  0),
+            glfw_utils.glfw.KEY_D: ( delta * 50, 0,  0),
+            glfw_utils.glfw.KEY_SPACE:      (0, 0,  delta * 50),
+            glfw_utils.glfw.KEY_LEFT_SHIFT: (0, 0, -delta * 50),
         }
         for key, (dx, dy, dz) in keys.items():
             if glfw_utils.glfw.get_key(self.window, key) == glfw_utils.glfw.PRESS:
@@ -95,9 +95,9 @@ class InputHandler:
         win = self.window
         cam = self.world_settings.world_camera
         if glfw_utils.glfw.get_key(win, glfw_utils.glfw.KEY_Q) == glfw_utils.glfw.PRESS:
-            cam.process_roll(+1)
+            cam.process_roll(+1, delta)
         if glfw_utils.glfw.get_key(win, glfw_utils.glfw.KEY_E) == glfw_utils.glfw.PRESS:
-            cam.process_roll(-1)
+            cam.process_roll(-1, delta)
 
     def _process_model_translations(self, delta):
         """

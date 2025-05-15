@@ -7,6 +7,7 @@ import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2, Imu
+from std_msgs.msg import Empty
 from geometry_msgs.msg import PoseStamped
 import cv_bridge
 
@@ -70,7 +71,7 @@ class SingleNode(Node):
         self.topic_name = topic_name
         self.msg_type = msg_type
         self.bridge = cv_bridge.CvBridge()
-        self.subscriber = self.create_subscription(msg_type, topic_name, self.callback, 10)
+        self.subscriber = self.create_subscription(msg_type, topic_name, self.callback, 200)
 
     def callback(self, msg) -> None:
         """
@@ -80,15 +81,21 @@ class SingleNode(Node):
             self.update_image(msg)
         elif self.msg_type == Imu:
             self.update_imu(msg)
-        elif SingleGaussian is not None and self.msg_type == SingleGaussian:
-            self.update_gaussian(msg)
         elif GaussianArray is not None and self.msg_type == GaussianArray:
             self.update_gaussian(msg)
+        # TODO: Implement support for Single Gaussians
 
+    def update_empty(self) -> None:
+        """
+        Process and pass an empty message to the UI.
+        """
+        imgui_manager.refresh()
     def update_gaussian(self, msg) -> None:
         """
         Process and pass a gaussian message to the UI.
         """
+        if msg.refresh:
+            imgui_manager.refresh()
         imgui_manager.set_gaussian(msg)
 
     def update_imu(self, msg) -> None:
