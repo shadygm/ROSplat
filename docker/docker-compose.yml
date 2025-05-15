@@ -11,7 +11,7 @@ services:
         USER_PASSWORD: ${USER_PASSWORD}
     image: rosplat
     network_mode: "host"
-    cpus: 8
+    cpus: 16
     mem_limit: 16g
     ipc: host
     pid: host
@@ -27,7 +27,6 @@ services:
       - USER_GID=${USER_GID}
       - USERNAME=${USERNAME}
       - ROS_DOMAIN_ID=0
-      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       - DISPLAY=unix${DISPLAY}
       - XAUTHORITY=${XAUTHORITY}
       - SSH_AUTH_SOCK=${SSH_AUTH_SOCK}
