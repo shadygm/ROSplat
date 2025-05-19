@@ -33,7 +33,7 @@ except ImportError:
 
 # === Global State ===
 world_settings = None
-frame_queue = queue.Queue(maxsize=1)
+frame_queue = queue.Queue(maxsize=10)
 imu_queue = queue.Queue(maxsize=1)
 ros_node_manager = ROSNodeManager()
 
@@ -90,6 +90,11 @@ class ScrollingBuffer:
     def get_data(self) -> np.ndarray:
         return self.data[:self.size].T if self.size < self.max_size else np.roll(self.data, -self.offset).T
 
+def set_image(image) -> None:
+    """
+    Set the image to be displayed in the ImGui window.
+    """
+    frame_queue.put(image)
 
 @immapp.static(open_file_dialog=None)
 def load_file() -> None:
@@ -143,7 +148,9 @@ def display_parameters_tab() -> None:
     if imgui.button("Screenshot"):
         take_screenshot(f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
     imgui.text("Parameters:")
-    _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
+    # TODO: Add more parameters for the CUDA renderer. 
+    # Currently, only the OpenGL has parameters.
+    # _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
     _renderer_settings()
 
 
@@ -220,7 +227,7 @@ def display_camera_tab() -> None:
 )
 def display_visualization_tab() -> None:
     """
-    Visualizes camera pose over time.
+    Visualizes camera pose over time with auto-zoom enabled.
     """
     static = display_visualization_tab
     if static.camera_pose is None:
@@ -244,11 +251,8 @@ def display_visualization_tab() -> None:
             static.data_y.add_point(y)
             static.data_z.add_point(z)
 
-        flags = implot3d.AxisFlags_.no_tick_labels | implot3d.AxisFlags_.auto_fit
+        flags = implot3d.AxisFlags_.auto_fit
         implot3d.setup_axes("Z", "X", "Y", flags, flags, flags)
-        implot3d.setup_axis_limits(implot3d.ImAxis3D_.x.value, -1, 1, implot3d.Cond_.always)
-        implot3d.setup_axis_limits(implot3d.ImAxis3D_.y.value, -1, 1, implot3d.Cond_.once)
-        implot3d.setup_axis_limits(implot3d.ImAxis3D_.z.value, -1, 1, implot3d.Cond_.once)
 
         if len(static.data_x.get_data()) > 0:
             implot3d.plot_line("Camera Pose", static.data_x.get_data(), static.data_y.get_data(), static.data_z.get_data())
@@ -283,32 +287,58 @@ def update_texture(tex: int, frame: np.ndarray) -> None:
     gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, w, h, fmt, gl.GL_UNSIGNED_BYTE, frame)
     gl.glFlush()
 
+def refresh() -> None:
+    """
+    Refresh the current set of Gaussians.
+    """
+    world_settings.refresh_gaussians()
 
-@immapp.static(image_texture=None)
+
+@immapp.static(image_texture=None, last_frame=None)
 def display_frames_tab() -> None:
     """
-    Display the latest frame as a texture.
+    Display the latest frame as a texture, and if no new frame
+    has arrived, keep displaying the previous one.
     """
+    static = display_frames_tab  # gives us access to image_texture & last_frame
+
+    # Drain the queue, keeping only the very last frame we pulled
+    latest = None
     try:
-        frame = frame_queue.get_nowait()
-        frame_queue.put(frame)
+        while True:
+            latest = frame_queue.get_nowait()
     except queue.Empty:
-        frame = None
+        pass
+
+    # If we got something new, stash it; otherwise we'll reuse last_frame
+    if latest is not None:
+        static.last_frame = latest
+
+    frame = static.last_frame
 
     if frame is None:
         imgui.text("Waiting for frame...")
         return
 
     h, w, _ = frame.shape
-    if display_frames_tab.image_texture is None:
-        display_frames_tab.image_texture = create_texture_from_frame(frame)
+    if static.image_texture is None:
+        static.image_texture = create_texture_from_frame(frame)
     else:
-        update_texture(display_frames_tab.image_texture, frame)
+        update_texture(static.image_texture, frame)
 
     avail_w, avail_h = imgui.get_content_region_avail()
     if implot.begin_plot("Live Frame", size=(avail_w, avail_h)):
-        implot.setup_axes("X", "Y", implot.AxisFlags_.no_tick_labels, implot.AxisFlags_.no_tick_labels)
-        implot.plot_image("Frame", display_frames_tab.image_texture, (0, 0), (avail_w, avail_h))
+        implot.setup_axes(
+            "X", "Y",
+            implot.AxisFlags_.no_tick_labels,
+            implot.AxisFlags_.no_tick_labels
+        )
+        implot.plot_image(
+            "Frame",
+            static.image_texture,
+            (0, 0),
+            (avail_w, avail_h)
+        )
         implot.end_plot()
 
 
