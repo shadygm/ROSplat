@@ -1,5 +1,6 @@
 import queue
 from datetime import datetime
+import threading 
 
 import cv2
 import numpy as np
@@ -11,7 +12,6 @@ from imgui_bundle import (
     imgui,
     immapp,
     implot,
-    implot3d,
     portable_file_dialogs as pfd,
 )
 
@@ -33,9 +33,9 @@ except ImportError:
 
 # === Global State ===
 world_settings = None
-frame_queue = queue.Queue(maxsize=10)
 imu_queue = queue.Queue(maxsize=1)
-ros_node_manager = ROSNodeManager()
+ros_node_manager = None
+frame_queue = queue.Queue(maxsize=5)  # Drop-old style buffer
 
 type_visualization = [
     "Gaussian Ball", "Flat Ball", "Billboard",
@@ -45,6 +45,13 @@ type_visualization = [
 # IMU history
 accel_x, accel_y, accel_z = [], [], []
 gyro_x, gyro_y, gyro_z = [], [], []
+
+current_frame = None
+current_frame_lock = threading.Lock()
+
+def init_ros_nodemanager():
+    global ros_node_manager
+    ros_node_manager = ROSNodeManager()
 
 
 def take_screenshot(filename: str = "screenshot.png") -> None:
@@ -90,11 +97,6 @@ class ScrollingBuffer:
     def get_data(self) -> np.ndarray:
         return self.data[:self.size].T if self.size < self.max_size else np.roll(self.data, -self.offset).T
 
-def set_image(image) -> None:
-    """
-    Set the image to be displayed in the ImGui window.
-    """
-    frame_queue.put(image)
 
 @immapp.static(open_file_dialog=None)
 def load_file() -> None:
@@ -148,15 +150,13 @@ def display_parameters_tab() -> None:
     if imgui.button("Screenshot"):
         take_screenshot(f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
     imgui.text("Parameters:")
-    # TODO: Add more parameters for the CUDA renderer. 
-    # Currently, only the OpenGL has parameters.
-    # _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
+    _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
     _renderer_settings()
 
 
 @immapp.static(
     selected_topic="",
-    available_topics=ros_util.list_topics(),
+    available_topics=[],
     active_topics=[],
     prev_time=-1.0
 )
@@ -170,11 +170,11 @@ def display_ros_tab() -> None:
 
     current_time = imgui.get_time()
     if static.prev_time == -1.0 or current_time - static.prev_time > 1.0:
-        static.available_topics = ros_util.list_topics()
+        static.available_topics = ros_node_manager._graph.get_topic_names_and_types()
         static.prev_time = current_time
 
     if imgui.button("Refresh"):
-        static.available_topics = ros_util.list_topics()
+        static.available_topics = ros_node_manager._graph.get_topic_names_and_types()
 
     if imgui.begin_table("TopicsTable", 3):
         imgui.table_next_column()
@@ -220,46 +220,6 @@ def display_camera_tab() -> None:
     """
     imgui.text("Camera settings go here.")
 
-
-@immapp.static(
-    camera_pose=None, t=0.0, last_t=-1.0,
-    data_x=None, data_y=None, data_z=None
-)
-def display_visualization_tab() -> None:
-    """
-    Visualizes camera pose over time with auto-zoom enabled.
-    """
-    static = display_visualization_tab
-    if static.camera_pose is None:
-        static.camera_pose = np.eye(4)
-        static.data_x = CircularBuffer(20000)
-        static.data_y = CircularBuffer(20000)
-        static.data_z = CircularBuffer(20000)
-
-    if imgui.button("Reset Camera"):
-        static.data_x = CircularBuffer(20000)
-        static.data_y = CircularBuffer(20000)
-        static.data_z = CircularBuffer(20000)
-
-    if implot3d.begin_plot("Camera Plot", size=(-1, -1)):
-        static.t += imgui.get_io().delta_time
-        if static.t - static.last_t > 0.01:
-            static.last_t = static.t
-            pose = world_settings.get_camera_pose()
-            x, y, z = -pose[2], -pose[0], -pose[1]
-            static.data_x.add_point(x)
-            static.data_y.add_point(y)
-            static.data_z.add_point(z)
-
-        flags = implot3d.AxisFlags_.auto_fit
-        implot3d.setup_axes("Z", "X", "Y", flags, flags, flags)
-
-        if len(static.data_x.get_data()) > 0:
-            implot3d.plot_line("Camera Pose", static.data_x.get_data(), static.data_y.get_data(), static.data_z.get_data())
-
-        implot3d.end_plot()
-
-
 def create_texture_from_frame(frame: np.ndarray) -> int:
     """
     Create an OpenGL texture from a NumPy image.
@@ -287,59 +247,54 @@ def update_texture(tex: int, frame: np.ndarray) -> None:
     gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, w, h, fmt, gl.GL_UNSIGNED_BYTE, frame)
     gl.glFlush()
 
-def refresh() -> None:
+def set_image(image):
     """
-    Refresh the current set of Gaussians.
+    Update the current frame with thread-safe access.
     """
-    world_settings.refresh_gaussians()
-
-
-@immapp.static(image_texture=None, last_frame=None)
-def display_frames_tab() -> None:
-    """
-    Display the latest frame as a texture, and if no new frame
-    has arrived, keep displaying the previous one.
-    """
-    static = display_frames_tab  # gives us access to image_texture & last_frame
-
-    # Drain the queue, keeping only the very last frame we pulled
-    latest = None
     try:
-        while True:
-            latest = frame_queue.get_nowait()
+        frame_queue.put_nowait(image)
+    except queue.Full:
+        _ = frame_queue.get_nowait()  # Drop the oldest frame
+        frame_queue.put_nowait(image)
+
+
+@immapp.static(image_texture=None, prev_shape=None)
+def display_frames_tab():
+    """
+    Display the latest frame as a texture with thread-safe access.
+    """
+    import imgui_manager
+    global current_frame
+
+    try:
+        frame = imgui_manager.frame_queue.get_nowait()
+        with current_frame_lock:
+            current_frame = frame
     except queue.Empty:
-        pass
+        pass  # No new frame available
 
-    # If we got something new, stash it; otherwise we'll reuse last_frame
-    if latest is not None:
-        static.last_frame = latest
-
-    frame = static.last_frame
+    with current_frame_lock:
+        frame = current_frame
 
     if frame is None:
         imgui.text("Waiting for frame...")
         return
 
     h, w, _ = frame.shape
-    if static.image_texture is None:
-        static.image_texture = create_texture_from_frame(frame)
+    if display_frames_tab.image_texture is None or display_frames_tab.prev_shape != frame.shape:
+        if display_frames_tab.image_texture:
+            gl.glDeleteTextures([display_frames_tab.image_texture])
+        display_frames_tab.image_texture = create_texture_from_frame(frame)
+        display_frames_tab.prev_shape = frame.shape
     else:
-        update_texture(static.image_texture, frame)
+        update_texture(display_frames_tab.image_texture, frame)
 
     avail_w, avail_h = imgui.get_content_region_avail()
     if implot.begin_plot("Live Frame", size=(avail_w, avail_h)):
-        implot.setup_axes(
-            "X", "Y",
-            implot.AxisFlags_.no_tick_labels,
-            implot.AxisFlags_.no_tick_labels
-        )
-        implot.plot_image(
-            "Frame",
-            static.image_texture,
-            (0, 0),
-            (avail_w, avail_h)
-        )
+        implot.setup_axes("X", "Y", implot.AxisFlags_.no_tick_labels, implot.AxisFlags_.no_tick_labels)
+        implot.plot_image("Frame", display_frames_tab.image_texture, (0, 0), (avail_w, avail_h))
         implot.end_plot()
+        
 
 
 def update_imu_queue(lin_accel: np.ndarray, ang_vel: np.ndarray) -> None:
@@ -403,6 +358,10 @@ def main_ui(this_world_settings) -> None:
     if world_settings is None:
         world_settings = this_world_settings
 
+    if ros_node_manager is None:
+        init_ros_nodemanager()
+
+
     if imgui.begin("Main Application"):
         if imgui.begin_tab_bar("MainTabs"):
             if imgui.begin_tab_item("ROSplat")[0]:
@@ -413,9 +372,6 @@ def main_ui(this_world_settings) -> None:
                 imgui.end_tab_item()
             if imgui.begin_tab_item("Camera Settings")[0]:
                 display_camera_tab()
-                imgui.end_tab_item()
-            if imgui.begin_tab_item("3D Visualization")[0]:
-                display_visualization_tab()
                 imgui.end_tab_item()
             if imgui.begin_tab_item("Frames")[0]:
                 display_frames_tab()

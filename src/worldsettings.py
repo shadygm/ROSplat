@@ -93,12 +93,6 @@ class WorldSettings:
         """
         return self.world_camera.get_pose()
 
-    def refresh_gaussians(self) -> None:
-        # Set to empty list of gaussians
-        self.gaussian_set = None
-        util.logger.info("Gaussians refreshed.")
-        self.have_new_gaussians = True
-
     def create_gaussian_renderer(self) -> None:
         """
         Initialize the appropriate Gaussian renderer (CUDA or OpenGL).
@@ -137,16 +131,15 @@ class WorldSettings:
 
     def convert_gaussian(self, gaussian: SingleGaussian) -> GaussianData:
         """
-        Convert a SingleGaussian message to a GaussianData instance.
+        Convert a SingleGaussian message (with array-based fields) to a GaussianData instance.
         """
-        xyz = np.array([[gaussian.xyz.x, gaussian.xyz.y, gaussian.xyz.z]], dtype=np.float32)
-        rot = np.array([[gaussian.rotation.x, gaussian.rotation.y,
-                         gaussian.rotation.z, gaussian.rotation.w]], dtype=np.float32)
-        scale = np.array([[gaussian.scale.x, gaussian.scale.y, gaussian.scale.z]],
-                         dtype=np.float32)
-        opacity = np.array([[gaussian.opacity]], dtype=np.float32)
+        xyz = np.array([gaussian.xyz], dtype=np.float32)
+        rot = np.array([gaussian.rotation], dtype=np.float32)
+        scale = np.array([gaussian.scale], dtype=np.float32)
+        opacity = np.array([[gaussian.opacity / 255.0]], dtype=np.float32)
         sh = np.array([gaussian.spherical_harmonics], dtype=np.float32)
         return GaussianData(xyz, rot, scale, opacity, sh)
+
 
     def switch_renderer(self, type: str) -> None:
         """
@@ -193,10 +186,23 @@ class WorldSettings:
 
     def append_gaussians(self, gaussians: GaussianArray) -> None:
         """
-        Append multiple Gaussians to the current set, or directly forward them to the CUDA renderer.
+        Append multiple Gaussians to the current set, or replace them entirely if a refresh is requested.
         """
         new_gaussians = [self.convert_gaussian(g) for g in gaussians.gaussians]
-        
+
+        if gaussians.refresh:
+            util.logger.info("Received refresh signal, clearing existing Gaussians.")
+            self.gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
+            self.is_original = False
+            self.brand_new = True
+            self.have_new_gaussians = True
+
+            if self.gauss_renderer:
+                self.gauss_renderer.reset_gaussians()
+                self.gauss_renderer.add_gaussians_from_ros(self.gaussian_set)
+            return
+
+        # Normal append path
         if isinstance(self.gauss_renderer, CUDARenderer):
             if self.overwrite_gaussians or self.is_original:
                 self.gauss_renderer.reset_gaussians()
@@ -209,14 +215,13 @@ class WorldSettings:
                 self.gaussian_set = gaussian_representation.combine_gaussians(
                     [self.gaussian_set] + new_gaussians
                 )
-            
+
             temp_gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
             self.gauss_renderer.add_gaussians_from_ros(temp_gaussian_set)
             return
 
         if len(self.gaussian_set) >= MAX_GAUSSIANS:
             return
-
 
         if self.overwrite_gaussians or self.is_original:
             self.gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
@@ -229,6 +234,7 @@ class WorldSettings:
 
         self.brand_new = True
         self.have_new_gaussians = True
+
 
 
     def reset_gaussians(self) -> None:

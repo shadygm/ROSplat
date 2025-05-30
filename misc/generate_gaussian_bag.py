@@ -13,10 +13,10 @@ Requirements:
     - plyfile
     - Custom message types:
         gaussian_interface/SingleGaussian, with:
-            geometry_msgs/msg/Point xyz
-            geometry_msgs/msg/Quaternion rotation
-            float32 opacity
-            geometry_msgs/msg/Vector3 scale
+            float32[3] xyz
+            float32[4] rotation
+            float32[3] scale
+            uint8 opacity
             float32[] spherical_harmonics
         gaussian_interface/GaussianArray, with:
             gaussian_interface/SingleGaussian[] gaussians
@@ -38,7 +38,6 @@ import rclpy
 from rclpy.node import Node
 
 # ROS2 message imports
-from geometry_msgs.msg import Point, Quaternion, Vector3
 from gaussian_interface.msg import SingleGaussian, GaussianArray
 
 @dataclass
@@ -52,19 +51,12 @@ class GaussianData:
     opacity: np.ndarray  # shape: (N, 1)
     sh: np.ndarray       # shape: (N, sh_dim)
 
-    def flat(self) -> np.ndarray:
-        """
-        Flatten all parameters into a single contiguous array of shape (N, <all_dims>).
-        """
-        ret = np.concatenate([self.xyz, self.rot, self.scale, self.opacity, self.sh], axis=-1)
-        return np.ascontiguousarray(ret)
-    
     def __len__(self) -> int:
         """
         Return the number of Gaussian entries (N).
         """
         return len(self.xyz)
-    
+
     @property
     def sh_dim(self) -> int:
         """
@@ -85,24 +77,24 @@ def from_ply(path: str) -> GaussianData:
     """
     max_sh_degree = 3
     plydata = PlyData.read(path)
-    
+
     # Load positions.
     xyz = np.stack((
         np.asarray(plydata.elements[0]["x"]),
         np.asarray(plydata.elements[0]["y"]),
         np.asarray(plydata.elements[0]["z"])
     ), axis=1).astype(np.float32)
-    
+
     # Load opacities and apply a sigmoid.
     opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis].astype(np.float32)
     opacities = 1 / (1 + np.exp(-opacities))
-    
+
     # Load direct current (DC) features for spherical harmonics.
     features_dc = np.zeros((xyz.shape[0], 3, 1), dtype=np.float32)
     features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
     features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
     features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
-    
+
     # Load extra SH features.
     extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
     extra_f_names = sorted(extra_f_names, key=lambda x: int(x.split('_')[-1]))
@@ -112,7 +104,7 @@ def from_ply(path: str) -> GaussianData:
         features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
     features_extra = features_extra.reshape((features_extra.shape[0], 3, (max_sh_degree + 1) ** 2 - 1))
     features_extra = np.transpose(features_extra, [0, 2, 1])
-    
+
     # Load scales.
     scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
     scale_names = sorted(scale_names, key=lambda x: int(x.split('_')[-1]))
@@ -120,7 +112,7 @@ def from_ply(path: str) -> GaussianData:
     for idx, attr_name in enumerate(scale_names):
         scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
     scales = np.exp(scales).astype(np.float32)
-    
+
     # Load rotations.
     rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
     rot_names = sorted(rot_names, key=lambda x: int(x.split('_')[-1]))
@@ -130,13 +122,13 @@ def from_ply(path: str) -> GaussianData:
     # Normalize quaternion
     rots = rots / np.linalg.norm(rots, axis=-1, keepdims=True)
     rots = rots.astype(np.float32)
-    
+
     # Concatenate DC and extra features to form SH coefficients.
     sh = np.concatenate([
         features_dc.reshape(-1, 3),
         features_extra.reshape(xyz.shape[0], -1)
     ], axis=-1).astype(np.float32)
-    
+
     return GaussianData(xyz, rots, scales, opacities, sh)
 
 class GaussianPublisher(Node):
@@ -154,55 +146,51 @@ class GaussianPublisher(Node):
         self.get_logger().info(
             f"Loaded {self.total} gaussians. Publishing GaussianArray with {self.batch_size} gaussians at 30 Hz."
         )
-        
+
         # Create a timer that calls publish_array every 1/30 seconds (30 Hz).
         self.timer = self.create_timer(1 / 30.0, self.publish_array)
 
     def publish_array(self):
         """Publish a GaussianArray containing a batch of 1000 SingleGaussian messages."""
-        import time  # Import time module for timing
-        start_time = time.time()  # Start timing
+        import time
+        start_time = time.time()
 
         array_msg = GaussianArray()
-        
-        # Preallocate the GaussianArray message with the required size.
         array_msg.gaussians = [SingleGaussian() for _ in range(self.batch_size)]
 
-        # Populate the GaussianArray message.
         for i in range(self.batch_size):
             curr_idx = (self.idx + i) % self.total
             single_msg = array_msg.gaussians[i]
-            
-            # Set position.
-            single_msg.xyz.x = float(self.gaussian_data.xyz[curr_idx, 0])
-            single_msg.xyz.y = float(self.gaussian_data.xyz[curr_idx, 1])
-            single_msg.xyz.z = float(self.gaussian_data.xyz[curr_idx, 2])
-            
-            # Set rotation (quaternion).
-            single_msg.rotation.x = float(self.gaussian_data.rot[curr_idx, 0])
-            single_msg.rotation.y = float(self.gaussian_data.rot[curr_idx, 1])
-            single_msg.rotation.z = float(self.gaussian_data.rot[curr_idx, 2])
-            single_msg.rotation.w = float(self.gaussian_data.rot[curr_idx, 3])
-            
-            # Set opacity.
-            single_msg.opacity = float(self.gaussian_data.opacity[curr_idx, 0])
-            
-            # Set scale.
-            single_msg.scale.x = float(self.gaussian_data.scale[curr_idx, 0])
-            single_msg.scale.y = float(self.gaussian_data.scale[curr_idx, 1])
-            single_msg.scale.z = float(self.gaussian_data.scale[curr_idx, 2])
-            
-            # Set spherical harmonics.
+
+            # Set data using the new array-based message structure.
+            single_msg.xyz = self.gaussian_data.xyz[curr_idx].tolist()
+            single_msg.rotation = self.gaussian_data.rot[curr_idx].tolist()
+            single_msg.scale = self.gaussian_data.scale[curr_idx].tolist()
+            single_msg.opacity = int(np.clip(self.gaussian_data.opacity[curr_idx, 0] * 255, 0, 255))
             single_msg.spherical_harmonics = self.gaussian_data.sh[curr_idx].tolist()
-        
+            # print length of the sh array
+            #print the scale 
+            print(f"Scale: {single_msg.scale}")
+            print(f"SH length: {len(single_msg.spherical_harmonics)}")
         # Advance the index by batch_size.
         self.idx = (self.idx + self.batch_size) % self.total
-        
-        serialization_time = time.time() - start_time  # Calculate serialization time
+
+        serialization_time = time.time() - start_time
         self.get_logger().info(f"Serialization took {serialization_time:.6f} seconds.")
 
         self.publisher_.publish(array_msg)
-        # self.get_logger().info(f"Published GaussianArray with {len(array_msg.gaussians)} gaussians.")
+
+    def convert_gaussian(self, gaussian: SingleGaussian) -> GaussianData:
+        """
+        Convert a SingleGaussian message (with array-based fields) to a GaussianData instance.
+        """
+        xyz = np.array([gaussian.xyz], dtype=np.float32)
+        rot = np.array([gaussian.rotation], dtype=np.float32)
+        scale = np.array([gaussian.scale], dtype=np.float32)
+        opacity = np.array([[gaussian.opacity / 255.0]], dtype=np.float32)
+        # print the spherical harmonics type values
+        print(f"Spherical harmonics type: {type(gaussian.spherical_harmonics)}")
+        return GaussianData(xyz, rot, scale, opacity, sh)
 
 def main(args=None):
     parser = argparse.ArgumentParser(
@@ -221,7 +209,7 @@ def main(args=None):
         sys.exit(1)
 
     node = GaussianPublisher(g_data)
-    
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

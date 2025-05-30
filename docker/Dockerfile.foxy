@@ -1,0 +1,96 @@
+FROM nvidia/cuda:12.6.0-cudnn-devel-ubuntu20.04
+LABEL maintainer="Shady Gmira <shady.gmira@gmail.com>"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Base packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    ca-certificates \
+    gnupg2 \
+    lsb-release \
+    locales \
+    python3 \
+    python3-pip \
+    sudo \
+    x11-apps \
+    zenity \
+    openssh-client \
+    software-properties-common \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Locale
+RUN locale-gen en_US.UTF-8 && \
+    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+ENV ROS_DISTRO=foxy
+
+# ROS 2 setup for Foxy
+RUN add-apt-repository universe && \
+    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | \
+    gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu focal main" \
+    > /etc/apt/sources.list.d/ros2.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-${ROS_DISTRO}-desktop \
+    python3-argcomplete \
+    ros-dev-tools \
+    python3-colcon-common-extensions \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Python requirements4
+COPY ./docker/requirements-docker.txt requirements.txt
+RUN wget https://github.com/Kitware/CMake/releases/download/v3.29.2/cmake-3.29.2-linux-x86_64.sh -O /cmake-install.sh && \
+    chmod +x /cmake-install.sh && \
+    /cmake-install.sh --skip-license --prefix=/usr/local
+
+
+ENV CMAKE_EXECUTABLE=/usr/local/bin/cmake
+
+RUN pip install --upgrade pip setuptools wheel scikit-build importlib-metadata packaging pybind11
+RUN pip install --no-build-isolation imgui-bundle
+RUN pip install --no-cache-dir --ignore-installed -r requirements.txt
+
+# Change this env variable to your own system requirements
+ENV TORCH_CUDA_ARCH_LIST="8.6" 
+RUN pip install git+https://github.com/nerfstudio-project/gsplat.git
+
+# OpenGL & NVIDIA driver integration
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglvnd-dev \
+    libgl1 \
+    libglx0 \
+    libegl1 \
+    libx11-6 \
+    libglfw3-dev \
+    mesa-utils \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ARG USER_UID
+ARG USER_GID
+ARG USERNAME
+
+RUN set -eux; \
+    EXISTING_USER_BY_UID=$(getent passwd "${USER_UID}" | cut -d: -f1 || true); \
+    if [ -n "$EXISTING_USER_BY_UID" ]; then userdel -r "$EXISTING_USER_BY_UID" || true; fi; \
+    if id "${USERNAME}" >/dev/null 2>&1; then userdel -r "${USERNAME}" || true; fi; \
+    if getent group "${USER_GID}" >/dev/null; then groupdel "$(getent group "${USER_GID}" | cut -d: -f1)"; fi; \
+    if getent group "${USERNAME}" >/dev/null; then groupdel "${USERNAME}"; fi; \
+    groupadd --gid "${USER_GID}" "${USERNAME}"; \
+    useradd -m -u "${USER_UID}" -g "${USER_GID}" "${USERNAME}"; \
+    usermod -aG sudo "${USERNAME}"; \
+    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Setup bashrc for ROS 2 Foxy
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /home/${USERNAME}/.bashrc && \
+    chown ${USER_UID}:${USER_GID} /home/${USERNAME}/.bashrc
+
+# Set environment
+ENV USER=${USERNAME}
+ENV HOME=/home/${USERNAME}
+WORKDIR /home/${USERNAME}

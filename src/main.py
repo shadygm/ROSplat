@@ -1,8 +1,9 @@
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
-from imgui_bundle import imgui, implot3d, implot
+from imgui_bundle import imgui, implot
 import glfw
 import OpenGL.GL as gl
 import subprocess
+import rclpy
 
 from input_handler import InputHandler
 import util
@@ -27,7 +28,7 @@ class App:
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
 
-        window_name = "ROSplat"
+        window_name = "Cosmos"
         self.window = glfw.create_window(
             self.world_camera.w, self.world_camera.h, window_name, None, None
         )
@@ -41,7 +42,6 @@ class App:
 
     def init_imgui(self):
         imgui.create_context()
-        implot3d.create_context()
         implot.create_context()
         self.glfw_renderer = GlfwRenderer(self.window)
 
@@ -126,6 +126,9 @@ class App:
 
         glfw.terminate()
 
+    def shutdown(self):
+        glfw.terminate()
+
     def run(self):
         self.init_glfw()
         self.init_imgui()
@@ -138,7 +141,13 @@ class App:
 
 def main():
     app = App()
-    app.run()
+    if not rclpy.ok():
+        rclpy.init()
+    try:
+        app.run()
+    finally:
+        app.shutdown()
+        rclpy.shutdown()
 
 
 if __name__ == "__main__":

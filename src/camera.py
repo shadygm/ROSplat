@@ -3,82 +3,92 @@ import math
 import numpy as np
 import glm
 import util
-from scipy.spatial.transform import Rotation as R
 
 class Camera:
     """
-    A camera class to manage viewing transformations for a 3D scene.
-    Internally uses quaternion orientation, externally exposes Euler angles.
+    Free‐flight camera with full basis‐vector orientation:
+      • front, up, right kept orthonormal
+      • yaw/pitch/roll all performed via axis‐angle
+      • auxiliary intrinsics + legacy getters preserved
     """
 
     def __init__(self, height: int, width: int) -> None:
+        # viewport
         self.h = height
         self.w = width
+
+        # clipping & FOV
         self.znear = 0.01
-        self.zfar = 100.0
-        self.fovy = np.pi / 2
+        self.zfar  = 100.0
+        self.fovy  = np.pi / 2
 
-        # Position
+        # position & orientation vectors
         self.position = np.array([0.0, 0.0, 3.0], dtype=np.float32)
+        # look‐direction
+        self.front = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+        # inverted up‐vector
+        self.up    = np.array([0.0, -1.0, 0.0], dtype=np.float32)
 
-        # Orientation as a unit quaternion [x, y, z, w]
-        self.rotation = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+        # derive right from front × up
+        self._reorthonormalize()
 
-        # World-up is now +Y
-        self.up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
-
-        # Mouse state
+        # mouse‐look state
         self.first_mouse = True
-        self.last_x = width  / 2
+        self.last_x = width / 2
         self.last_y = height / 2
-        self.is_leftmouse_pressed  = False
-        self.is_rightmouse_pressed = False
+        self.is_rotating = False
+        self.is_panning  = False
 
-        # Dirty flags
+        # “dirty” flags
         self.dirty_pose      = True
         self.dirty_intrinsic = True
 
-        # Sensitivities
-        self.rot_sensitivity   = 0.005
-        self.trans_sensitivity = 0.01
-        self.zoom_sensitivity  = 0.08
-        self.roll_speed  = 45.0
+        # sensitivities
+        self.rot_sensitivity   = 0.002   # radians per pixel
+        self.trans_sensitivity = 2.5     # units per second
+        self.zoom_sensitivity  = 0.1
+        self.roll_sensitivity  = 0.03    # radians per keypress
 
         self.log = util.logger
 
+    def _reorthonormalize(self):
+        """Ensure front, up, right remain an orthonormal basis."""
+        self.front /= np.linalg.norm(self.front)
+        self.up    -= self.front * np.dot(self.front, self.up)
+        self.up    /= np.linalg.norm(self.up)
+        self.right  = np.cross(self.front, self.up)
+        self.right /= np.linalg.norm(self.right)
+
+    def _rotate_vec(self, v: np.ndarray, axis: np.ndarray, angle: float) -> np.ndarray:
+        """Rodrigues’ rotation of v around axis by angle."""
+        axis = axis / np.linalg.norm(axis)
+        cosA = math.cos(angle)
+        sinA = math.sin(angle)
+        return (
+            v * cosA
+            + np.cross(axis, v) * sinA
+            + axis * np.dot(axis, v) * (1 - cosA)
+        )
+
+    #
+    # === Controls: translation, scroll, mouse‐drag ===
+    #
+
     def process_translation(self, dx: float, dy: float, dz: float) -> None:
         """
-        Move the camera along its local axes:
-          dx → right, dy → forward, dz → up (world-up)
+        Move in local camera space:
+          • forward/back = dy
+          • right/left   = dx
+          • up/down      = dz
         """
-        front = self._get_front_vector()
-        front /= np.linalg.norm(front)
-        right = np.cross(front, self.up)
-        right /= np.linalg.norm(right)
-        # no normalization of the sum: each axis moves at its own speed
-        self.position += (
-            right * dx +
-            front * dy +
-            self.up * dz
-        ) * self.trans_sensitivity
+        move = self.front*dy + self.right*dx + self.up*dz
+        self.position += move
         self.dirty_pose = True
 
     def process_scroll(self, xoffset: float, yoffset: float) -> None:
-        """
-        Zoom in/out by moving along the view direction.
-        """
-        front = self._get_front_vector()
-        front /= np.linalg.norm(front)
-        self.position += front * yoffset * self.zoom_sensitivity
+        """Zoom along the current look‐direction."""
+        self.position += self.front * yoffset * self.zoom_sensitivity
         self.dirty_pose = True
-
-    def get_pose(self) -> tuple:
-        """
-        Returns the current camera position and rotation in Euler angles (yaw, pitch, roll).
-        """
-        rot = R.from_quat(self.rotation)
-        yaw, pitch, roll = rot.as_euler('yxz', degrees=False)
-        return self.position, (yaw, pitch, roll)
 
     def process_mouse(self, xpos: float, ypos: float) -> None:
         if self.first_mouse:
@@ -91,102 +101,81 @@ class Camera:
         self.last_x = xpos
         self.last_y = ypos
 
-        if self.is_leftmouse_pressed:
+        if self.is_rotating:
             self._rotate_camera(dx, dy)
-        if self.is_rightmouse_pressed:
+        elif self.is_panning:
             self._pan_camera(dx, dy)
-
-    def _rotate_camera(self, dx: float, dy: float) -> None:
-        """
-        Yaw around world-up; pitch around camera's right axis.
-        Drag right → look right; drag up → look up.
-        """
-        yaw = dx * self.rot_sensitivity
-        pitch = dy * self.rot_sensitivity
-
-        # rotate around world-up
-        r_yaw = R.from_rotvec(self.up * yaw)
-
-        # rotate around camera's right axis
-        front = self._get_front_vector()
-        right = np.cross(front, self.up)
-        right /= np.linalg.norm(right)
-        r_pitch = R.from_rotvec(right * pitch)
-
-        # apply new orientation
-        r_current = R.from_quat(self.rotation)
-        r_new = r_pitch * r_yaw * r_current
-        self.rotation = r_new.as_quat()
-        self.dirty_pose = True
 
     def _pan_camera(self, dx: float, dy: float) -> None:
         """
-        Pan the camera parallel to the view plane.
-        Drag right → camera moves right
-        Drag up    → camera moves up
+        Slide camera parallel to view plane:
+          • horizontal (dx) along right
+          • vertical   (dy) along up
         """
-        front = self._get_front_vector()
-        front /= np.linalg.norm(front)
-        right = np.cross(front, self.up)
-        right /= np.linalg.norm(right)
-        up_cam = np.cross(right, front)
-        up_cam /= np.linalg.norm(up_cam)
-
-        # camera moves in the opposite sense of the drag
-        self.position += (
-            -right * dx +
-             up_cam * dy
-        ) * self.trans_sensitivity
+        self.position += (self.right*dx + self.up*dy) * self.trans_sensitivity * 0.01
         self.dirty_pose = True
 
-    def process_roll(self, direction: float, delta_time: float) -> None:
+    #
+    # === Axis‐angle rotations ===
+    #
+
+    def _rotate_camera(self, dx: float, dy: float) -> None:
         """
-        Roll the camera ccw/cw around its view (front) axis.
-
-        :param direction: +1 for CCW (Q), -1 for CW (E)
-        :param delta_time: time elapsed since last frame (in seconds)
+        Yaw (around up) then pitch (around right), both respecting current roll.
         """
-        # 1) Compute roll angle in radians
-        angle_rad = math.radians(direction * self.roll_speed * delta_time)
+        # yaw: negative dx → turn right
+        ang_yaw   = -dx * self.rot_sensitivity
+        self.front = self._rotate_vec(self.front, self.up, ang_yaw)
 
-        # 2) Get the camera’s forward vector in world space
-        front = self._get_front_vector()
-        front /= np.linalg.norm(front)
+        # pitch: positive dy → look up
+        self._reorthonormalize()
+        ang_pitch = +dy * self.rot_sensitivity
+        self.front = self._rotate_vec(self.front, self.right, ang_pitch)
+        self.up    = self._rotate_vec(self.up,    self.right, ang_pitch)
 
-        # 3) Rotate the up vector around the front axis
-        self.up = self._rotate_vector(self.up, front, angle_rad)
-        self.up /= np.linalg.norm(self.up)
-
-        # 4) Mark the view as needing an update
+        self._reorthonormalize()
         self.dirty_pose = True
 
-
-    def _rotate_vector(self, v: np.ndarray, axis: np.ndarray, θ: float) -> np.ndarray:
+    def process_roll(self, direction: float) -> None:
         """
-        Rodrigues' rotation formula:
-        v_rot = v*cosθ + (axis×v)*sinθ + axis*(axis·v)*(1−cosθ)
+        Roll around the view axis:
+          • +direction → CCW from camera POV
+          • −direction → CW
         """
-        return (
-            v * math.cos(θ) +
-            np.cross(axis, v) * math.sin(θ) +
-            axis * np.dot(axis, v) * (1 - math.cos(θ))
-        )
+        angle = direction * self.roll_sensitivity
+        self.up    = self._rotate_vec(self.up,    self.front, angle)
+        self.right = self._rotate_vec(self.right, self.front, angle)
+        self._reorthonormalize()
+        self.dirty_pose = True
 
-    def _get_front_vector(self) -> np.ndarray:
-        rot = R.from_quat(self.rotation)
-        return rot.apply(np.array([0.0, 0.0, -1.0], dtype=np.float32))
+    #
+    # === Matrices & auxiliary getters ===
+    #
+
+    def get_view_matrix(self) -> np.ndarray:
+        """Look‐at using position + front/up."""
+        pos   = glm.vec3(*self.position)
+        tgt   = glm.vec3(*(self.position + self.front))
+        upv   = glm.vec3(*self.up)
+        return np.array(glm.lookAt(pos, tgt, upv), dtype=np.float32)
 
     def get_view_matrix_glm(self) -> np.ndarray:
-        pos = glm.vec3(*self.position)
-        front = glm.vec3(*self._get_front_vector())
-        up_vec = glm.vec3(*self.up)
-        return np.array(glm.lookAt(pos, pos + front, up_vec), dtype=np.float32)
+        """Alias for backward compatibility."""
+        return self.get_view_matrix()
 
     def get_project_matrix(self) -> np.ndarray:
-        proj = glm.perspective(self.fovy, self.w / self.h, self.znear, self.zfar)
-        return np.array(proj, dtype=np.float32)
+        """Perspective projection."""
+        return np.array(
+            glm.perspective(self.fovy, self.w/self.h, self.znear, self.zfar),
+            dtype=np.float32
+        )
+
+    def get_pose(self) -> np.ndarray:
+        """Legacy: return camera position."""
+        return self.position.copy()
 
     def get_intrinsics_matrix(self) -> np.ndarray:
+        """3×3 pinhole intrinsics."""
         f = self.w / (2 * math.tan(self.fovy/2))
         return np.array([
             [f, 0, self.w/2],
@@ -194,23 +183,11 @@ class Camera:
             [0, 0, 1]
         ], dtype=np.float32)
 
-    def get_view_matrix(self) -> np.ndarray:
-        front = self._get_front_vector()
-        front /= np.linalg.norm(front)
-        up = self.up / np.linalg.norm(self.up)
-        side = np.cross(front, up)
-        side /= np.linalg.norm(side)
-        up_cam = np.cross(side, front)
-
-        view = np.eye(4, dtype=np.float32)
-        view[0, :3] = side
-        view[1, :3] = up_cam
-        view[2, :3] = -front
-        view[:3, 3] = -view[:3, :3] @ self.position
-        return view
-
     def get_htanfovxy_focal(self) -> list:
-        htany = np.tan(self.fovy / 2)
+        """
+        [tan(fov_x/2), tan(fov_y/2), focal_length].
+        """
+        htany = math.tan(self.fovy/2)
         htanx = htany * (self.w / self.h)
         focal = self.w / (2 * htanx) if htanx != 0 else 0
         return [htanx, htany, focal]
