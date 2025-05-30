@@ -124,8 +124,7 @@ class SingleNode(Node):
         """
         try:
             img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            imgui_manager.set_image(img_rgb.copy())  # Copy is important to decouple memory
+            imgui_manager.set_image(img)
         except Exception as e:
             util.logger.error(f"Error converting image: {e}")
 

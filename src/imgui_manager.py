@@ -1,6 +1,5 @@
 import queue
 from datetime import datetime
-import threading 
 
 import cv2
 import numpy as np
@@ -33,9 +32,9 @@ except ImportError:
 
 # === Global State ===
 world_settings = None
+frame_queue = queue.Queue(maxsize=10)
 imu_queue = queue.Queue(maxsize=1)
-ros_node_manager = None
-frame_queue = queue.Queue(maxsize=5)  # Drop-old style buffer
+ros_node_manager = ROSNodeManager()
 
 type_visualization = [
     "Gaussian Ball", "Flat Ball", "Billboard",
@@ -45,13 +44,6 @@ type_visualization = [
 # IMU history
 accel_x, accel_y, accel_z = [], [], []
 gyro_x, gyro_y, gyro_z = [], [], []
-
-current_frame = None
-current_frame_lock = threading.Lock()
-
-def init_ros_nodemanager():
-    global ros_node_manager
-    ros_node_manager = ROSNodeManager()
 
 
 def take_screenshot(filename: str = "screenshot.png") -> None:
@@ -97,6 +89,11 @@ class ScrollingBuffer:
     def get_data(self) -> np.ndarray:
         return self.data[:self.size].T if self.size < self.max_size else np.roll(self.data, -self.offset).T
 
+def set_image(image) -> None:
+    """
+    Set the image to be displayed in the ImGui window.
+    """
+    frame_queue.put(image)
 
 @immapp.static(open_file_dialog=None)
 def load_file() -> None:
@@ -150,7 +147,9 @@ def display_parameters_tab() -> None:
     if imgui.button("Screenshot"):
         take_screenshot(f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
     imgui.text("Parameters:")
-    _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
+    # TODO: Add more parameters for the CUDA renderer. 
+    # Currently, only the OpenGL has parameters.
+    # _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
     _renderer_settings()
 
 
@@ -214,11 +213,13 @@ def display_ros_tab() -> None:
         imgui.end_disabled()
 
 
+
 def display_camera_tab() -> None:
     """
     Placeholder for camera settings tab.
     """
     imgui.text("Camera settings go here.")
+
 
 def create_texture_from_frame(frame: np.ndarray) -> int:
     """
@@ -247,54 +248,59 @@ def update_texture(tex: int, frame: np.ndarray) -> None:
     gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, w, h, fmt, gl.GL_UNSIGNED_BYTE, frame)
     gl.glFlush()
 
-def set_image(image):
+def refresh() -> None:
     """
-    Update the current frame with thread-safe access.
+    Refresh the current set of Gaussians.
     """
+    world_settings.refresh_gaussians()
+
+
+@immapp.static(image_texture=None, last_frame=None)
+def display_frames_tab() -> None:
+    """
+    Display the latest frame as a texture, and if no new frame
+    has arrived, keep displaying the previous one.
+    """
+    static = display_frames_tab  # gives us access to image_texture & last_frame
+
+    # Drain the queue, keeping only the very last frame we pulled
+    latest = None
     try:
-        frame_queue.put_nowait(image)
-    except queue.Full:
-        _ = frame_queue.get_nowait()  # Drop the oldest frame
-        frame_queue.put_nowait(image)
-
-
-@immapp.static(image_texture=None, prev_shape=None)
-def display_frames_tab():
-    """
-    Display the latest frame as a texture with thread-safe access.
-    """
-    import imgui_manager
-    global current_frame
-
-    try:
-        frame = imgui_manager.frame_queue.get_nowait()
-        with current_frame_lock:
-            current_frame = frame
+        while True:
+            latest = frame_queue.get_nowait()
     except queue.Empty:
-        pass  # No new frame available
+        pass
 
-    with current_frame_lock:
-        frame = current_frame
+    # If we got something new, stash it; otherwise we'll reuse last_frame
+    if latest is not None:
+        static.last_frame = latest
+
+    frame = static.last_frame
 
     if frame is None:
         imgui.text("Waiting for frame...")
         return
 
     h, w, _ = frame.shape
-    if display_frames_tab.image_texture is None or display_frames_tab.prev_shape != frame.shape:
-        if display_frames_tab.image_texture:
-            gl.glDeleteTextures([display_frames_tab.image_texture])
-        display_frames_tab.image_texture = create_texture_from_frame(frame)
-        display_frames_tab.prev_shape = frame.shape
+    if static.image_texture is None:
+        static.image_texture = create_texture_from_frame(frame)
     else:
-        update_texture(display_frames_tab.image_texture, frame)
+        update_texture(static.image_texture, frame)
 
     avail_w, avail_h = imgui.get_content_region_avail()
     if implot.begin_plot("Live Frame", size=(avail_w, avail_h)):
-        implot.setup_axes("X", "Y", implot.AxisFlags_.no_tick_labels, implot.AxisFlags_.no_tick_labels)
-        implot.plot_image("Frame", display_frames_tab.image_texture, (0, 0), (avail_w, avail_h))
+        implot.setup_axes(
+            "X", "Y",
+            implot.AxisFlags_.no_tick_labels,
+            implot.AxisFlags_.no_tick_labels
+        )
+        implot.plot_image(
+            "Frame",
+            static.image_texture,
+            (0, 0),
+            (avail_w, avail_h)
+        )
         implot.end_plot()
-        
 
 
 def update_imu_queue(lin_accel: np.ndarray, ang_vel: np.ndarray) -> None:
@@ -357,10 +363,6 @@ def main_ui(this_world_settings) -> None:
     global world_settings
     if world_settings is None:
         world_settings = this_world_settings
-
-    if ros_node_manager is None:
-        init_ros_nodemanager()
-
 
     if imgui.begin("Main Application"):
         if imgui.begin_tab_bar("MainTabs"):
