@@ -33,6 +33,7 @@ except ImportError:
 # === Global State ===
 world_settings = None
 frame_queue = queue.Queue(maxsize=10)
+latest_frame = [None]  # mutable container
 imu_queue = queue.Queue(maxsize=1)
 ros_node_manager = ROSNodeManager()
 
@@ -90,10 +91,7 @@ class ScrollingBuffer:
         return self.data[:self.size].T if self.size < self.max_size else np.roll(self.data, -self.offset).T
 
 def set_image(image) -> None:
-    """
-    Set the image to be displayed in the ImGui window.
-    """
-    frame_queue.put(image)
+    latest_frame[0] = image
 
 @immapp.static(open_file_dialog=None)
 def load_file() -> None:
@@ -258,22 +256,13 @@ def refresh() -> None:
 @immapp.static(image_texture=None, last_frame=None)
 def display_frames_tab() -> None:
     """
-    Display the latest frame as a texture, and if no new frame
-    has arrived, keep displaying the previous one.
+    Display the most recent frame using OpenGL texture.
     """
-    static = display_frames_tab  # gives us access to image_texture & last_frame
+    static = display_frames_tab
 
-    # Drain the queue, keeping only the very last frame we pulled
-    latest = None
-    try:
-        while True:
-            latest = frame_queue.get_nowait()
-    except queue.Empty:
-        pass
-
-    # If we got something new, stash it; otherwise we'll reuse last_frame
-    if latest is not None:
-        static.last_frame = latest
+    # Grab the latest image from shared memory
+    if latest_frame[0] is not None:
+        static.last_frame = latest_frame[0]
 
     frame = static.last_frame
 
@@ -301,6 +290,7 @@ def display_frames_tab() -> None:
             (avail_w, avail_h)
         )
         implot.end_plot()
+
 
 
 def update_imu_queue(lin_accel: np.ndarray, ang_vel: np.ndarray) -> None:

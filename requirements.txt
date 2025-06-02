@@ -4,7 +4,7 @@ empy==3.3.4
 glfw
 imageio
 loguru
-numpy
+numpy<2
 opencv-python
 pillow
 plyfile

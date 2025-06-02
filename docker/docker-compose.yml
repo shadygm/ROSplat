@@ -1,5 +1,6 @@
 services:
   rosplat:
+    container_name: rosplat
     entrypoint: /bin/bash
     build:
       context: ../

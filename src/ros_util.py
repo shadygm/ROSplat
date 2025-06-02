@@ -100,7 +100,6 @@ class SingleNode(Node):
         """
         Process and pass a gaussian message to the UI.
         """
-        util.logger.info("Received some gaussssss")
         imgui_manager.set_gaussian(msg)
 
     def update_imu(self, msg) -> None:
