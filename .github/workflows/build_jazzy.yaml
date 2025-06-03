@@ -1,0 +1,22 @@
+name: Build ROSplat Docker - Jazzy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-jazzy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make build script executable
+        run: chmod +x ./docker/run_docker.sh
+
+      - name: Build ROS 2 Jazzy Docker image (no cache)
+        run: ./docker/run_docker.sh -n -j

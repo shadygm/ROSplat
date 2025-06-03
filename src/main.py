@@ -28,7 +28,7 @@ class App:
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
 
-        window_name = "Cosmos"
+        window_name = "ROSplat"
         self.window = glfw.create_window(
             self.world_camera.w, self.world_camera.h, window_name, None, None
         )

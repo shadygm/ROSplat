@@ -73,7 +73,7 @@ class SingleNode(Node):
         self.bridge = cv_bridge.CvBridge()
 
         qos = QoSProfile(depth=200)
-        qos.reliability = ReliabilityPolicy.RELIABLE  # Or RELIABLE if required
+        qos.reliability = ReliabilityPolicy.RELIABLE
         qos.durability = DurabilityPolicy.VOLATILE
 
         self.subscriber = self.create_subscription(
