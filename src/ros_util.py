@@ -1,15 +1,17 @@
 import threading
 from enum import Enum
 from typing import Optional, Tuple, Dict, List
+import time
 
 import numpy as np
 import rclpy
-from rclpy.executors import SingleThreadedExecutor
+from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2, Imu
-from std_msgs.msg import Empty
 from geometry_msgs.msg import PoseStamped
 import cv_bridge
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+import cv2
 
 import util
 import imgui_manager
@@ -30,23 +32,21 @@ class MsgType(Enum):
     GAUSSIAN = ("gaussian_interface/msg/SingleGaussian", SingleGaussian)
     GAUSSIAN_ARRAY = ("gaussian_interface/msg/GaussianArray", GaussianArray)
 
-def list_topics() -> List[Tuple[str, List[str]]]:
-    """
-    Initialize and create a temporary node to list available topics.
-    Returns:
-        A sorted list (by topic name) of topics with their message type strings.
-    """
-    should_shutdown = False
+def list_topics():
     if not rclpy.ok():
-        rclpy.init(args=None)
-        should_shutdown = True
+        rclpy.init()
 
+    util.logger.error(rclpy.ok)
+    
     node = rclpy.create_node('list_topics')
+    exec = SingleThreadedExecutor()
+    exec.add_node(node)
+    exec.spin_once(timeout_sec=0.5)      # process discovery events
     topics = node.get_topic_names_and_types()
+    exec.shutdown()
     node.destroy_node()
-
-    if should_shutdown:
-        rclpy.shutdown()
+    rclpy.shutdown()
+    return sorted(topics, key=lambda x: x[0])
 
     return sorted(topics, key=lambda x: x[0])
 
@@ -71,7 +71,17 @@ class SingleNode(Node):
         self.topic_name = topic_name
         self.msg_type = msg_type
         self.bridge = cv_bridge.CvBridge()
-        self.subscriber = self.create_subscription(msg_type, topic_name, self.callback, 200)
+
+        qos = QoSProfile(depth=200)
+        qos.reliability = ReliabilityPolicy.RELIABLE
+        qos.durability = DurabilityPolicy.VOLATILE
+
+        self.subscriber = self.create_subscription(
+            msg_type,
+            topic_name,
+            self.callback,
+            qos
+        )
 
     def callback(self, msg) -> None:
         """
@@ -81,21 +91,15 @@ class SingleNode(Node):
             self.update_image(msg)
         elif self.msg_type == Imu:
             self.update_imu(msg)
+        elif SingleGaussian is not None and self.msg_type == SingleGaussian:
+            self.update_gaussian(msg)
         elif GaussianArray is not None and self.msg_type == GaussianArray:
             self.update_gaussian(msg)
-        # TODO: Implement support for Single Gaussians
 
-    def update_empty(self) -> None:
-        """
-        Process and pass an empty message to the UI.
-        """
-        imgui_manager.refresh()
     def update_gaussian(self, msg) -> None:
         """
         Process and pass a gaussian message to the UI.
         """
-        if msg.refresh:
-            imgui_manager.refresh()
         imgui_manager.set_gaussian(msg)
 
     def update_imu(self, msg) -> None:
@@ -134,19 +138,32 @@ class SingleNode(Node):
 
 class ROSNodeManager:
     """
-    Manager class that handles spinning ROS nodes in their dedicated threads.
+    Manager class that handles spinning ROS nodes in a single MultiThreadedExecutor.
     """
     def __init__(self) -> None:
         if not rclpy.ok():
-            rclpy.init(args=None)
-        self.nodes: Dict[str, Tuple[SingleNode, threading.Thread, threading.Event]] = {}
+            rclpy.init()
+
+        self.executor = rclpy.executors.MultiThreadedExecutor()
+        self._graph = GraphWatcher()
+        self.executor.add_node(self._graph)
+
+        self.nodes: Dict[str, SingleNode] = {}
         self.node_idx_counter: int = 0
+        self._lock = threading.Lock()
+
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def _spin(self):
+        """Run the executor in a dedicated background thread."""
+        self.executor.spin()
 
     def get_msg_type(self, topic_name: str):
         """
         Check the topic and return its corresponding message type.
         """
-        topics = list_topics()
+        topics = self._graph.get_topic_names_and_types()
         for name, type_list in topics:
             if name == topic_name and type_list:
                 message_class = get_message_class(type_list[0])
@@ -155,43 +172,95 @@ class ROSNodeManager:
 
     def add_listener(self, topic_name: str) -> None:
         """
-        Create and spin a node that listens to messages on the given topic.
+        Create and add a node that listens to messages on the given topic.
         """
-        if topic_name in self.nodes:
-            util.logger.info(f"Node for topic {topic_name} already exists.")
-            return
+        with self._lock:
+            if topic_name in self.nodes:
+                util.logger.info(f"Node for topic {topic_name} already exists.")
+                return
 
-        msg_type = self.get_msg_type(topic_name)
-        if msg_type is None:
-            util.logger.error(f"Could not determine message type for topic {topic_name}")
-            return
+            msg_type = self.get_msg_type(topic_name)
+            if msg_type is None:
+                util.logger.error(f"Could not determine message type for topic {topic_name}")
+                return
 
-        node = SingleNode(self.node_idx_counter, topic_name, msg_type)
-        self.node_idx_counter += 1
+            node = SingleNode(self.node_idx_counter, topic_name, msg_type)
+            self.node_idx_counter += 1
 
-        stop_event = threading.Event()
-
-        def spin_loop() -> None:
-            executor = SingleThreadedExecutor()
-            executor.add_node(node)
-            while rclpy.ok() and not stop_event.is_set():
-                executor.spin_once(timeout_sec=0.1)
-            executor.shutdown()
-            node.destroy()
-
-        thread = threading.Thread(target=spin_loop, daemon=True)
-        thread.start()
-        self.nodes[topic_name] = (node, thread, stop_event)
-        util.logger.info(f"Added listener for topic {topic_name}")
+            self.executor.add_node(node)
+            self.nodes[topic_name] = node
+            util.logger.info(f"Added listener for topic {topic_name}")
 
     def kill_listener(self, topic_name: str) -> None:
         """
-        Stop the listener thread for the specified topic and clean it up.
+        Remove the listener node for the specified topic and clean it up.
         """
-        if topic_name in self.nodes:
-            node, thread, stop_event = self.nodes.pop(topic_name)
-            stop_event.set()
-            thread.join()
-            util.logger.info(f"Killed listener for topic {topic_name}")
-        else:
-            util.logger.error(f"Node for topic {topic_name} does not exist.")
+        with self._lock:
+            if topic_name in self.nodes:
+                node = self.nodes.pop(topic_name)
+                self.executor.remove_node(node)
+                node.destroy()
+                util.logger.info(f"Killed listener for topic {topic_name}")
+            else:
+                util.logger.error(f"Node for topic {topic_name} does not exist.")
+
+    def shutdown(self):
+        """
+        Shutdown the executor and clean up all nodes.
+        """
+        with self._lock:
+            for topic_name, node in list(self.nodes.items()):
+                self.kill_listener(topic_name)
+
+        self.executor.remove_node(self._graph)
+        self._graph.shutdown()
+        self.executor.shutdown()
+        util.logger.info("ROSNodeManager shutdown complete.")
+
+class GraphWatcher(Node):
+    """
+    A node that can initialize ROS graph monitoring, but only starts its executor when explicitly requested.
+    """
+    def __init__(self):
+        super().__init__('graph_watcher')
+        self.executor = None
+        self._thread = None
+        self._stop_event = threading.Event()
+
+    def start(self):
+        if self.executor is not None:
+            util.logger.warning("GraphWatcher already started.")
+            return
+
+        if not rclpy.ok():
+            rclpy.init()
+
+        try:
+            self.executor = SingleThreadedExecutor()
+            self.executor.add_node(self)
+            self._thread = threading.Thread(target=self._spin, daemon=True)
+            self._thread.start()
+            util.logger.info("GraphWatcher started.")
+        except Exception as e:
+            util.logger.error(f"Failed to start GraphWatcher: {e}")
+            self.executor = None
+
+
+    def _spin(self):
+        while rclpy.ok() and not self._stop_event.is_set():
+            self.executor.spin_once(timeout_sec=0.1)
+
+    def get_topic_names_and_types(self):
+        return super().get_topic_names_and_types()
+
+    def get_node_names_and_namespaces(self):
+        return super().get_node_names_and_namespaces()
+
+    def shutdown(self):
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join()
+        if self.executor is not None:
+            self.executor.shutdown()
+        self.destroy_node()
+        util.logger.info("GraphWatcher shutdown complete.")

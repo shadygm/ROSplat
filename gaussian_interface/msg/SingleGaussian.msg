@@ -1,16 +1,17 @@
 # Gaussian.msg
 
 # 3D Pose
-geometry_msgs/Point xyz
+float32[3] xyz
 
 # Rotation as Quaternion
-geometry_msgs/Quaternion rotation
+float32[4] rotation
 
 # Scale along each axis
-geometry_msgs/Vector3 scale
+float32[3] scale
 
 # Opacity
-float32 opacity
+# Quantized as a number between 0-255 instead of 0-1
+uint8 opacity
 
 # Spherical Harmonics
 float32[] spherical_harmonics

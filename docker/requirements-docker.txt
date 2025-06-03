@@ -1,15 +1,14 @@
 torch
-imgui-bundle
 empy==3.3.4
 glfw
 imageio
 loguru
-numpy<2
+numpy
 opencv-python
 pillow
 plyfile
 pyglm
-PyOpenGL
+PyOpenGL==3.1.4
 PyYAML
 setuptools
 catkin_pkg

@@ -1,0 +1,24 @@
+name: Build ROSplat Docker - Foxy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-foxy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make build script executable
+        working-directory: ./docker
+        run: chmod +x ./run_docker.sh
+
+      - name: Build ROS 2 Foxy Docker image (no cache)
+        working-directory: ./docker
+        run: ./run_docker.sh -bf

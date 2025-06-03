@@ -11,7 +11,6 @@ from imgui_bundle import (
     imgui,
     immapp,
     implot,
-    implot3d,
     portable_file_dialogs as pfd,
 )
 
@@ -34,6 +33,7 @@ except ImportError:
 # === Global State ===
 world_settings = None
 frame_queue = queue.Queue(maxsize=10)
+latest_frame = [None]  # mutable container
 imu_queue = queue.Queue(maxsize=1)
 ros_node_manager = ROSNodeManager()
 
@@ -91,10 +91,7 @@ class ScrollingBuffer:
         return self.data[:self.size].T if self.size < self.max_size else np.roll(self.data, -self.offset).T
 
 def set_image(image) -> None:
-    """
-    Set the image to be displayed in the ImGui window.
-    """
-    frame_queue.put(image)
+    latest_frame[0] = image
 
 @immapp.static(open_file_dialog=None)
 def load_file() -> None:
@@ -156,7 +153,7 @@ def display_parameters_tab() -> None:
 
 @immapp.static(
     selected_topic="",
-    available_topics=ros_util.list_topics(),
+    available_topics=[],
     active_topics=[],
     prev_time=-1.0
 )
@@ -170,11 +167,11 @@ def display_ros_tab() -> None:
 
     current_time = imgui.get_time()
     if static.prev_time == -1.0 or current_time - static.prev_time > 1.0:
-        static.available_topics = ros_util.list_topics()
+        static.available_topics = ros_node_manager._graph.get_topic_names_and_types()
         static.prev_time = current_time
 
     if imgui.button("Refresh"):
-        static.available_topics = ros_util.list_topics()
+        static.available_topics = ros_node_manager._graph.get_topic_names_and_types()
 
     if imgui.begin_table("TopicsTable", 3):
         imgui.table_next_column()
@@ -214,50 +211,12 @@ def display_ros_tab() -> None:
         imgui.end_disabled()
 
 
+
 def display_camera_tab() -> None:
     """
     Placeholder for camera settings tab.
     """
     imgui.text("Camera settings go here.")
-
-
-@immapp.static(
-    camera_pose=None, t=0.0, last_t=-1.0,
-    data_x=None, data_y=None, data_z=None
-)
-def display_visualization_tab() -> None:
-    """
-    Visualizes camera pose over time with auto-zoom enabled.
-    """
-    static = display_visualization_tab
-    if static.camera_pose is None:
-        static.camera_pose = np.eye(4)
-        static.data_x = CircularBuffer(20000)
-        static.data_y = CircularBuffer(20000)
-        static.data_z = CircularBuffer(20000)
-
-    if imgui.button("Reset Camera"):
-        static.data_x = CircularBuffer(20000)
-        static.data_y = CircularBuffer(20000)
-        static.data_z = CircularBuffer(20000)
-
-    if implot3d.begin_plot("Camera Plot", size=(-1, -1)):
-        static.t += imgui.get_io().delta_time
-        if static.t - static.last_t > 0.01:
-            static.last_t = static.t
-            pose = world_settings.get_camera_pose()
-            x, y, z = -pose[2], -pose[0], -pose[1]
-            static.data_x.add_point(x)
-            static.data_y.add_point(y)
-            static.data_z.add_point(z)
-
-        flags = implot3d.AxisFlags_.auto_fit
-        implot3d.setup_axes("Z", "X", "Y", flags, flags, flags)
-
-        if len(static.data_x.get_data()) > 0:
-            implot3d.plot_line("Camera Pose", static.data_x.get_data(), static.data_y.get_data(), static.data_z.get_data())
-
-        implot3d.end_plot()
 
 
 def create_texture_from_frame(frame: np.ndarray) -> int:
@@ -297,22 +256,13 @@ def refresh() -> None:
 @immapp.static(image_texture=None, last_frame=None)
 def display_frames_tab() -> None:
     """
-    Display the latest frame as a texture, and if no new frame
-    has arrived, keep displaying the previous one.
+    Display the most recent frame using OpenGL texture.
     """
-    static = display_frames_tab  # gives us access to image_texture & last_frame
+    static = display_frames_tab
 
-    # Drain the queue, keeping only the very last frame we pulled
-    latest = None
-    try:
-        while True:
-            latest = frame_queue.get_nowait()
-    except queue.Empty:
-        pass
-
-    # If we got something new, stash it; otherwise we'll reuse last_frame
-    if latest is not None:
-        static.last_frame = latest
+    # Grab the latest image from shared memory
+    if latest_frame[0] is not None:
+        static.last_frame = latest_frame[0]
 
     frame = static.last_frame
 
@@ -340,6 +290,7 @@ def display_frames_tab() -> None:
             (avail_w, avail_h)
         )
         implot.end_plot()
+
 
 
 def update_imu_queue(lin_accel: np.ndarray, ang_vel: np.ndarray) -> None:
@@ -413,9 +364,6 @@ def main_ui(this_world_settings) -> None:
                 imgui.end_tab_item()
             if imgui.begin_tab_item("Camera Settings")[0]:
                 display_camera_tab()
-                imgui.end_tab_item()
-            if imgui.begin_tab_item("3D Visualization")[0]:
-                display_visualization_tab()
                 imgui.end_tab_item()
             if imgui.begin_tab_item("Frames")[0]:
                 display_frames_tab()

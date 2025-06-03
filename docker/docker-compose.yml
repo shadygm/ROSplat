@@ -1,8 +1,10 @@
 services:
   rosplat:
+    container_name: rosplat
+    entrypoint: /bin/bash
     build:
       context: ../
-      dockerfile: docker/Dockerfile
+      dockerfile: ${DOCKERFILE}
       args:
         USER_UID: ${USER_UID}
         USER_GID: ${USER_GID}
@@ -11,7 +13,7 @@ services:
         USER_PASSWORD: ${USER_PASSWORD}
     image: rosplat
     network_mode: "host"
-    cpus: 16
+    cpus: 8
     mem_limit: 16g
     ipc: host
     pid: host
@@ -20,7 +22,6 @@ services:
     stdin_open: true
     tty: true
     working_dir: /home/${USERNAME}
-    command: /bin/bash
     runtime: nvidia
     environment:
       - USER_UID=${USER_UID}

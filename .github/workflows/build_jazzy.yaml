@@ -1,4 +1,4 @@
-name: Test ROSplat Docker Build
+name: Build ROSplat Docker - Jazzy
 
 on:
   push:
@@ -8,17 +8,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-build:
+  build-jazzy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Make script executable
+      - name: Make build script executable
         working-directory: ./docker
         run: chmod +x ./run_docker.sh
 
-      - name: Run Docker build script with no cache
+      - name: Build ROS 2 Jazzy Docker image (no cache)
         working-directory: ./docker
-        run: ./run_docker.sh -n
+        run: ./run_docker.sh -bj
