@@ -16,7 +16,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Make build script executable
-        run: chmod +x ./docker/run_docker.sh
+        working-directory: ./docker
+        run: chmod +x ./run_docker.sh
 
       - name: Build ROS 2 Jazzy Docker image (no cache)
-        run: ./docker/run_docker.sh -n -j
+        working-directory: ./docker
+        run: ./run_docker.sh -bj
