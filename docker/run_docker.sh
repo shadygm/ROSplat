@@ -49,7 +49,7 @@ export ROS_DOMAIN_ID=0
 export DOCKERFILE  # Needed by docker-compose
 
 if [ "$BUILD" = true ]; then
-    echo "Building docker image with $DOCKERFILE..."
+    echo -e "Building docker image with \033[0;31m$DOCKERFILE\033[0m..."
     DOCKER_BUILDKIT=1 docker compose build $BUILD_ARGS
     if [ "$?" -ne 0 ]; then
         echo "Docker build failed!"
