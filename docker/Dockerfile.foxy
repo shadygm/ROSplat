@@ -60,6 +60,8 @@ RUN pip install --no-cache-dir --ignore-installed -r requirements.txt
 ENV TORCH_CUDA_ARCH_LIST="8.6" 
 RUN pip install git+https://github.com/nerfstudio-project/gsplat.git
 
+RUN pip install --break-system-packages "numpy<2"
+
 # OpenGL & NVIDIA driver integration
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglvnd-dev \

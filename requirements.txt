@@ -1,10 +1,10 @@
+numpy<2
 torch
 imgui-bundle
 empy==3.3.4
 glfw
 imageio
 loguru
-numpy<2
 opencv-python
 pillow
 plyfile
