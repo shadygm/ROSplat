@@ -3,8 +3,8 @@ empy==3.3.4
 glfw
 imageio
 loguru
-numpy
 opencv-python
+numpy
 pillow
 plyfile
 pyglm
