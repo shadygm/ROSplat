@@ -33,6 +33,7 @@ services:
       - SSH_AUTH_SOCK=${SSH_AUTH_SOCK}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION}
     volumes:
       - ../:/home/${USERNAME}/projects/ROSplat
       - /tmp/.X11-unix:/tmp/.X11-unix:rw

@@ -14,4 +14,5 @@ setuptools
 catkin_pkg
 lark
 jinja2
+cv_bridge
 typeguard
