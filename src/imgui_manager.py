@@ -116,7 +116,6 @@ def _renderer_settings() -> None:
     if HAS_TORCH and torch.cuda.is_available():
         options = [RendererType.CUDA.value, RendererType.OPENGL.value]
         current_idx = 0 if world_settings.get_renderer_type() == RendererType.CUDA else 1
-        print(current_idx)
         changed, current_idx = imgui.combo("Renderer", current_idx, options)
         if changed:
             world_settings.switch_renderer(RendererType.CUDA if current_idx == 0 else RendererType.OPENGL)
