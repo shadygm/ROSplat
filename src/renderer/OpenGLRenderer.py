@@ -196,7 +196,6 @@ class OpenGLRenderer(GaussianRenderBase):
         util.set_uniform_mat4(self.program, model_mat, "model_matrix")
 
     def draw(self) -> None:
-        util.logger.info("Drawing gaussians")
         if self.gaussians is None or len(self.gaussians) == 0:
             return
         gl.glUseProgram(self.program)

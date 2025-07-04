@@ -1,5 +1,6 @@
-# input_handler.py
 from imgui_bundle import glfw_utils, imgui
+import util
+from worldsettings import RendererType
 import time
 
 class InputHandler:
@@ -45,6 +46,9 @@ class InputHandler:
 
     def cursor_pos_callback(self, window, xpos, ypos):
         io = imgui.get_io()
+        if self.world_settings.get_renderer_type() == RendererType.OPENGL:
+            # Invert the y direction
+            ypos *= -1
         io.add_mouse_pos_event(xpos, ypos)
         if not io.want_capture_mouse:
             self.cam.process_mouse(xpos, -ypos)
@@ -77,23 +81,27 @@ class InputHandler:
         speed = self.cam.trans_sensitivity * dt
         if glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS:
             speed *= 3.0
+        direction = 1
+        if self.world_settings.get_renderer_type() ==  RendererType.OPENGL:
+            util.logger.info("OpenGLRenderer detected, reversing direction for correct movement.")
+            direction = direction * (-1)
 
         # mapping: key -> (dx, dy, dz)
         moves = {
-            glfw.KEY_W: (0, -speed, 0),
-            glfw.KEY_S: (0, +speed, 0),
-            glfw.KEY_A: (+speed, 0, 0),
-            glfw.KEY_D: (-speed, 0, 0),
-            glfw.KEY_SPACE:      (0, 0, +speed),
-            glfw.KEY_LEFT_CONTROL:(0, 0, -speed),
+            glfw.KEY_W: (0, -direction * speed, 0),
+            glfw.KEY_S: (0, direction * speed, 0),
+            glfw.KEY_A: (direction * speed, 0, 0),
+            glfw.KEY_D: (-direction * speed, 0, 0),
+            glfw.KEY_SPACE:      (0, 0, -direction * speed),
+            glfw.KEY_LEFT_CONTROL:(0, 0, direction * speed),
         }
 
         if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
             # Counter‐clockwise roll when looking forward
-            self.cam.process_roll(+1)
+            self.cam.process_roll(direction)
         if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
             # Clockwise roll when looking forward
-            self.cam.process_roll(-1)
+            self.cam.process_roll(-direction)
 
         for key, (dx, dy, dz) in moves.items():
             if glfw.get_key(self.window, key) == glfw.PRESS:

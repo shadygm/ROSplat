@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import OpenGL.GL as gl
 from PIL import Image
+from worldsettings import RendererType
 
 # ImGui Bundle
 from imgui_bundle import (
@@ -113,11 +114,12 @@ def load_file() -> None:
 def _renderer_settings() -> None:
     imgui.text("Renderer:")
     if HAS_TORCH and torch.cuda.is_available():
-        options = ["CUDA Renderer", "OpenGL Renderer"]
-        current_idx = 0 if isinstance(world_settings.gauss_renderer, CUDARenderer) else 1
+        options = [RendererType.CUDA.value, RendererType.OPENGL.value]
+        current_idx = 0 if world_settings.get_renderer_type() == RendererType.CUDA else 1
+        print(current_idx)
         changed, current_idx = imgui.combo("Renderer", current_idx, options)
         if changed:
-            world_settings.switch_renderer("CUDA" if current_idx == 0 else "OpenGL")
+            world_settings.switch_renderer(RendererType.CUDA if current_idx == 0 else RendererType.OPENGL)
     if not isinstance(world_settings.gauss_renderer, CUDARenderer):
         imgui.text("OpenGL Renderer: Sorting needed.")
         if imgui.button("Sort and Update"):
