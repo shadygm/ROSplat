@@ -47,7 +47,6 @@ class InputHandler:
     def cursor_pos_callback(self, window, xpos, ypos):
         io = imgui.get_io()
         if self.world_settings.get_renderer_type() == RendererType.OPENGL:
-            # Invert the y direction
             ypos *= -1
         io.add_mouse_pos_event(xpos, ypos)
         if not io.want_capture_mouse:
@@ -83,7 +82,6 @@ class InputHandler:
             speed *= 3.0
         direction = 1
         if self.world_settings.get_renderer_type() ==  RendererType.OPENGL:
-            util.logger.info("OpenGLRenderer detected, reversing direction for correct movement.")
             direction = direction * (-1)
 
         # mapping: key -> (dx, dy, dz)
@@ -92,8 +90,8 @@ class InputHandler:
             glfw.KEY_S: (0, direction * speed, 0),
             glfw.KEY_A: (direction * speed, 0, 0),
             glfw.KEY_D: (-direction * speed, 0, 0),
-            glfw.KEY_SPACE:      (0, 0, -direction * speed),
-            glfw.KEY_LEFT_CONTROL:(0, 0, direction * speed),
+            glfw.KEY_SPACE:      (0, 0, direction * speed),
+            glfw.KEY_LEFT_CONTROL:(0, 0, -direction * speed),
         }
 
         if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
