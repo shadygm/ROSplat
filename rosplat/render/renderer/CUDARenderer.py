@@ -231,16 +231,8 @@ class CUDARenderer(GaussianRenderBase):
             radius_clip=0.5, sparse_grad=True,
         )
         img = torch.cat([cols, alps], dim=-1)[0].cpu().numpy()  # (H, W, 4), float32 [0,1]
-        max_val = img.max()
-        min_val = img.min()
-        mean_val = img.mean()
 
-        if max_val == 0.0 and mean_val == 0.0:
-            # Render solid black with full alpha
-            img8 = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-            img8[..., 3] = 255
-        else:
-            img8 = (np.clip(img, 0, 1) * 255).astype(np.uint8)
+        img8 = (np.clip(img, 0, 1) * 255).astype(np.uint8)
 
         # 4) Upload image to GPU
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)

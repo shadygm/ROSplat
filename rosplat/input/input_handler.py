@@ -16,6 +16,7 @@ class InputHandler:
 
         self.last_time = time.time()
         glfw.set_window_size_callback(window, self.window_resize_callback)
+        self.last_mouse_pos = None
 
     def window_resize_callback(self, window, width, height):
         self.cam.w = width

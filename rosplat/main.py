@@ -1,5 +1,5 @@
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
-from imgui_bundle import imgui, implot, hello_imgui
+from imgui_bundle import imgui, implot
 import glfw
 import OpenGL.GL as gl
 import subprocess

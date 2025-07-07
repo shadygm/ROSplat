@@ -102,7 +102,8 @@ class OpenGLRenderer(GaussianRenderBase):
         vert_shader_path = shader_dir / 'gau_vert.glsl'
         frag_shader_path = shader_dir / 'gau_frag.glsl'
         self.program = util.load_shaders(str(vert_shader_path), str(frag_shader_path))
-
+        self.width = w
+        self.height = h
         self._prev_gaussian_count = 0
         self.gau_bufferid = None
         self.index_bufferid = None

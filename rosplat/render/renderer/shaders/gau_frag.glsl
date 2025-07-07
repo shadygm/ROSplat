@@ -30,7 +30,7 @@ void main()
     if (opacity < 1.f / 255.f)
         discard;
     vec3 corrected_color = pow(color, vec3(1.0 / 2.2)); 
-    FragColor = vec4(color, opacity);
+    FragColor = vec4(corrected_color, opacity);
 
     // handling special shading effect
     if (render_mod == -3)
