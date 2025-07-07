@@ -1,7 +1,7 @@
 #!/bin/bash
 
 usage() {
-    echo "Usage: $0 [-h] [-b] [-n] [-u] [-c] [-j | -f]"
+    echo "Usage: $0 [-h] [-b] [-n] [-u] [-c] [-j | -f | -l]"
     echo " -h    Show this help message"
     echo " -b    Build with cache"
     echo " -n    Build without cache"
@@ -9,6 +9,7 @@ usage() {
     echo " -c    Stop and clean up"
     echo " -j    Use ROS 2 Jazzy (default)"
     echo " -f    Use ROS 2 Foxy"
+    echo " -l    Use ROS 2 Humble"
 }
 
 if [ "$#" -lt 1 ]; then
@@ -22,7 +23,7 @@ BUILD=false
 BUILD_ARGS=""
 COMPOSEUP=false
 
-while getopts "hbnucjf" opt; do
+while getopts "hbnucjfl" opt; do
     case ${opt} in
         h ) usage; exit 0 ;;
         b ) BUILD=true ;;
@@ -31,6 +32,7 @@ while getopts "hbnucjf" opt; do
         c ) docker compose down --remove-orphans; exit 0 ;;
         j ) DOCKERFILE="docker/Dockerfile.jazzy" ;;
         f ) DOCKERFILE="docker/Dockerfile.foxy" ;;
+        l ) DOCKERFILE="docker/Dockerfile.humble" ;;
         * ) usage; exit 1 ;;
     esac
 done
