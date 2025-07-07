@@ -1,4 +1,4 @@
-name: Build ROSplat Docker - Foxy
+name: Build ROSplat Docker - Humble
 
 on:
   push:
@@ -21,4 +21,4 @@ jobs:
 
       - name: Build ROS 2 Foxy Docker image
         working-directory: ./docker
-        run: ./run_docker.sh -bf
+        run: ./run_docker.sh -bl

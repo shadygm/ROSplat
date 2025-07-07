@@ -19,6 +19,6 @@ jobs:
         working-directory: ./docker
         run: chmod +x ./run_docker.sh
 
-      - name: Build ROS 2 Jazzy Docker image (no cache)
+      - name: Build ROS 2 Jazzy Docker image
         working-directory: ./docker
         run: ./run_docker.sh -bj
