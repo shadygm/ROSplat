@@ -83,6 +83,9 @@ class WorldSettings:
         if self.gauss_renderer:
             self.gauss_renderer.set_render_resolution(width, height)
 
+    def check_inputs(self) -> None:
+        self.input_handler.check_inputs()
+
     def update_render_mode(self, mode: int) -> None:
         """
         Set the rendering mode.

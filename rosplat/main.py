@@ -43,7 +43,30 @@ class App:
     def init_imgui(self):
         imgui.create_context()
         implot.create_context()
-        self.glfw_renderer = GlfwRenderer(self.window)
+
+        # Enable docking
+        io = imgui.get_io()
+
+        io.config_flags |= (imgui.ConfigFlags_.nav_enable_keyboard.value)
+        io.config_flags |= imgui.ConfigFlags_.docking_enable
+        io.config_flags |= imgui.ConfigFlags_.viewports_enable
+        self.io = io
+        # Style
+        imgui.style_colors_dark()
+
+        style = imgui.get_style()
+        if io.config_flags & imgui.ConfigFlags_.viewports_enable.value:
+            style.window_rounding = 0.0
+            window_bg_color = style.color_(imgui.Col_.window_bg.value)
+            window_bg_color.w = 1.0
+            style.set_color_(imgui.Col_.window_bg.value, window_bg_color)
+
+        import ctypes
+        window_address = ctypes.cast(self.window, ctypes.c_void_p).value
+        assert window_address is not None
+        imgui.backends.glfw_init_for_opengl(window_address, True)
+
+        imgui.backends.opengl3_init("#version 430 core")
 
     def update_camera_pose_lazy(self):
         if self.world_camera.dirty_pose:
@@ -108,20 +131,34 @@ class App:
     def game_loop(self):
         while not glfw.window_should_close(self.window):
             glfw.poll_events()
-            self.glfw_renderer.process_inputs()
 
+            imgui.backends.opengl3_new_frame()
+            imgui.backends.glfw_new_frame()
+            imgui.new_frame()
+
+            imgui.dock_space_over_viewport(
+                dockspace_id=0, viewport=imgui.get_main_viewport()
+            )
+
+            display_w, display_h = glfw.get_framebuffer_size(self.window)
+            gl.glViewport(0,0,display_w, display_h)
             gl.glClearColor(0, 0, 0, 1.0)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
-            self.world_settings.input_handler.check_inputs()
+            main_ui(this_world_settings=self.world_settings)
             self.process_frames()
 
-            self.world_settings.gauss_renderer.draw()
-            imgui.new_frame()
-            main_ui(this_world_settings=self.world_settings)
-
             imgui.render()
-            self.glfw_renderer.render(imgui.get_draw_data())
+
+
+            imgui.backends.opengl3_render_draw_data(imgui.get_draw_data())
+
+            if self.io.config_flags & imgui.ConfigFlags_.viewports_enable.value > 0:
+                backup_current_context = glfw.get_current_context()
+                imgui.update_platform_windows()
+                imgui.render_platform_windows_default()
+                glfw.make_context_current(backup_current_context)
+
             glfw.swap_buffers(self.window)
 
         glfw.terminate()

@@ -33,7 +33,7 @@ class GaussianRenderBase:
     def update_camera_intrin(self) -> None:
         raise NotImplementedError()
 
-    def draw(self) -> None:
+    def draw(self) -> int:
         raise NotImplementedError()
 
     def set_model_matrix(self, model_mat) -> None:

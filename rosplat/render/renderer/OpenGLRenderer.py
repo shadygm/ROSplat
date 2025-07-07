@@ -24,6 +24,30 @@ class CPUSorter(GaussianSorterBase):
         depth = xyz_view[:, 2, 0]
         index = np.argsort(depth).astype(np.int32).reshape(-1, 1)
         return index
+
+class CupySorter(GaussianSorterBase):
+    def __init__(self):
+        self._buffer_xyz = None
+        self._buffer_gausid = None
+
+    def sort(self, gaussian_set, view_mat: np.ndarray, force_update: bool = False) -> np.ndarray:
+        import cupy as cp
+        if gaussian_set is None or len(gaussian_set) == 0:
+            util.logger.error("Gaussian data not loaded")
+            return np.empty((0, 1), dtype=np.int32)
+        if (
+            self._buffer_gausid != id(gaussian_set)
+            or self._buffer_xyz is None
+            or self._buffer_xyz.shape[0] != len(gaussian_set)
+            or force_update
+        ):
+            self._buffer_xyz = cp.asarray(gaussian_set.xyz)
+            self._buffer_gausid = id(gaussian_set)
+        view_mat_cp = cp.asarray(view_mat)
+        xyz_view = view_mat_cp[None, :3, :3] @ self._buffer_xyz[..., None] + view_mat_cp[None, :3, 3, None]
+        depth = xyz_view[:, 2, 0]
+        index = cp.argsort(depth).astype(cp.int32).reshape(-1, 1)
+        return cp.asnumpy(index)
     
 class TorchSorter(GaussianSorterBase):
     def __init__(self):
@@ -68,30 +92,6 @@ def get_sorter() -> GaussianSorterBase:
 
 
 _sort_gaussian = get_sorter()
-
-class CupySorter(GaussianSorterBase):
-    def __init__(self):
-        self._buffer_xyz = None
-        self._buffer_gausid = None
-
-    def sort(self, gaussian_set, view_mat: np.ndarray, force_update: bool = False) -> np.ndarray:
-        import cupy as cp
-        if gaussian_set is None or len(gaussian_set) == 0:
-            util.logger.error("Gaussian data not loaded")
-            return np.empty((0, 1), dtype=np.int32)
-        if (
-            self._buffer_gausid != id(gaussian_set)
-            or self._buffer_xyz is None
-            or self._buffer_xyz.shape[0] != len(gaussian_set)
-            or force_update
-        ):
-            self._buffer_xyz = cp.asarray(gaussian_set.xyz)
-            self._buffer_gausid = id(gaussian_set)
-        view_mat_cp = cp.asarray(view_mat)
-        xyz_view = view_mat_cp[None, :3, :3] @ self._buffer_xyz[..., None] + view_mat_cp[None, :3, 3, None]
-        depth = xyz_view[:, 2, 0]
-        index = cp.argsort(depth).astype(cp.int32).reshape(-1, 1)
-        return cp.asnumpy(index)
     
 
 class OpenGLRenderer(GaussianRenderBase):
@@ -102,7 +102,8 @@ class OpenGLRenderer(GaussianRenderBase):
         vert_shader_path = shader_dir / 'gau_vert.glsl'
         frag_shader_path = shader_dir / 'gau_frag.glsl'
         self.program = util.load_shaders(str(vert_shader_path), str(frag_shader_path))
-
+        self.width = w
+        self.height = h
         self._prev_gaussian_count = 0
         self.gau_bufferid = None
         self.index_bufferid = None
@@ -128,6 +129,45 @@ class OpenGLRenderer(GaussianRenderBase):
         gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
 
         self.world_settings = world_settings
+
+        # --- Create texture for rendering ---
+        self.texture_id = gl.glGenTextures(1)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8, w, h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+        # --- Create and bind the framebuffer ---
+        self.fbo = gl.glGenFramebuffers(1)
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo)
+
+        # --- Attach the color texture to the FBO ---
+        gl.glFramebufferTexture2D(
+            gl.GL_FRAMEBUFFER,
+            gl.GL_COLOR_ATTACHMENT0,
+            gl.GL_TEXTURE_2D,
+            self.texture_id,
+            0
+        )
+
+        # --- Create and attach the depth buffer while FBO is bound ---
+        self.depth_buffer = gl.glGenRenderbuffers(1)
+        gl.glBindRenderbuffer(gl.GL_RENDERBUFFER, self.depth_buffer)
+        gl.glRenderbufferStorage(gl.GL_RENDERBUFFER, gl.GL_DEPTH_COMPONENT24, w, h)
+        gl.glFramebufferRenderbuffer(
+            gl.GL_FRAMEBUFFER,
+            gl.GL_DEPTH_ATTACHMENT,
+            gl.GL_RENDERBUFFER,
+            self.depth_buffer
+        )
+
+        # --- Check FBO completeness ---
+        status = gl.glCheckFramebufferStatus(gl.GL_FRAMEBUFFER)
+        assert status == gl.GL_FRAMEBUFFER_COMPLETE, f"Framebuffer incomplete: {status}"
+
+        # --- Unbind the framebuffer ---
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
 
     def update_vsync(self) -> None:
         if wglSwapIntervalEXT is not None:
@@ -199,16 +239,34 @@ class OpenGLRenderer(GaussianRenderBase):
     def set_model_matrix(self, model_mat) -> None:
         util.set_uniform_mat4(self.program, model_mat, "model_matrix")
 
-    def draw(self) -> None:
+    def draw(self) -> int:
         if self.gaussians is None or len(self.gaussians) == 0:
-            return
+            return self.texture_id  # Return blank texture
+
+        # --- Bind the framebuffer to render into texture ---
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo)
+        gl.glViewport(0, 0, self.world_settings.world_camera.w, self.world_settings.world_camera.h)
+
+        # --- Clear the buffer ---
+        gl.glClearColor(0.0, 0.0, 0.0, 0.0)
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+
+        # --- Render ---
         gl.glUseProgram(self.program)
         gl.glBindVertexArray(self.vao)
+
         num_gaussians = len(self.gaussians)
         gl.glDrawElementsInstanced(
             gl.GL_TRIANGLES,
-            self.quad_f.reshape(-1).shape[0],
+            self.quad_f.size,
             gl.GL_UNSIGNED_INT,
             None,
             num_gaussians
         )
+
+        # --- Unbind framebuffer ---
+        gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+
+        # --- Return the texture that now contains the rendered image ---
+        return self.texture_id
+

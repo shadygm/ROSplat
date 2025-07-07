@@ -373,3 +373,17 @@ def main_ui(this_world_settings) -> None:
                 imgui.end_tab_item()
             imgui.end_tab_bar()
         imgui.end()
+
+
+
+    if imgui.begin("Splat"):
+        avail_w, avail_h = imgui.get_content_region_avail()
+        # Cast both to int
+        avail_w = int(avail_w)
+        avail_h = int(avail_h)
+        this_world_settings.update_window_size(avail_w, avail_h)
+        tex = this_world_settings.gauss_renderer.draw()
+        imgui.image(tex, (avail_w, avail_h))
+        if imgui.is_window_hovered():
+            this_world_settings.check_inputs()
+        imgui.end()

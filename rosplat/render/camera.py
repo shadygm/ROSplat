@@ -33,7 +33,6 @@ class Camera:
         self._reorthonormalize()
 
         # mouse‐look state
-        self.first_mouse = True
         self.last_x = width / 2
         self.last_y = height / 2
         self.is_rotating = False
@@ -91,11 +90,6 @@ class Camera:
         self.dirty_pose = True
 
     def process_mouse(self, xpos: float, ypos: float) -> None:
-        if self.first_mouse:
-            self.last_x = xpos
-            self.last_y = ypos
-            self.first_mouse = False
-
         dx = xpos - self.last_x
         dy = self.last_y - ypos
         self.last_x = xpos
@@ -105,6 +99,18 @@ class Camera:
             self._rotate_camera(dx, dy)
         elif self.is_panning:
             self._pan_camera(dx, dy)
+
+    def process_mouse_delta(self, dx: float, dy: float) -> None:
+        """
+        Process a relative mouse motion:
+        • dx, dy = difference in pixels since last frame
+        • Applies rotation (yaw/pitch) or panning depending on active mode
+        """
+        if self.is_rotating:
+            self._rotate_camera(dx, dy)
+        elif self.is_panning:
+            self._pan_camera(dx, dy)
+
 
     def _pan_camera(self, dx: float, dy: float) -> None:
         """
