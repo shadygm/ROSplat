@@ -120,8 +120,7 @@ Usage
 
 Once the Gaussian messages are built, you can launch the visualizer from the project's root directory:
 
-    cd src
-    python3 main.py
+    python3 -m rosplat.main
 
 ### Testing Gaussian Visualization
 
@@ -133,8 +132,8 @@ To test visualizing Gaussians over ROS2 messages:
 *   **Terminal 1:** Run the visualizer:
 
     ```bash
-    cd projects/ROSplat/src
-    python3 main.py
+    cd projects/ROSplat
+    python3 -m rosplat.main
     ```
 
 *   **Terminal 2:** Publish Gaussian data:
