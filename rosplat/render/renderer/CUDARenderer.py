@@ -22,78 +22,30 @@ class CUDARenderer(GaussianRenderBase):
         self.render_mode = 'RGB'
         self.sh_degree: Optional[int] = None
         self.model_matrix: np.ndarray = np.eye(4, dtype=np.float32)
-
-        # Lock protecting both main data and cache
         self._data_lock = threading.Lock()
-
-        # Write-through cache for ROS updates
-        self._cache_means:  List[torch.Tensor] = []
-        self._cache_quats:  List[torch.Tensor] = []
+        self._cache_means: List[torch.Tensor] = []
+        self._cache_quats: List[torch.Tensor] = []
         self._cache_scales: List[torch.Tensor] = []
-        self._cache_opacs:  List[torch.Tensor] = []
+        self._cache_opacs: List[torch.Tensor] = []
         self._cache_colors: List[torch.Tensor] = []
         self._cache_sh_deg: Optional[int] = None
 
-        # === OpenGL texture setup ===
+
+        # Create a single OpenGL texture
         self.texture_id = gl.glGenTextures(1)
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
+        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
         gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
         gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
         gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
         gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-        gl.glPixelStorei(gl.GL_UNPACK_ALIGNMENT, 1)
-        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F,
-                        w, h, 0, gl.GL_RGBA, gl.GL_FLOAT, None)
-
-        # === Fullscreen quad shaders ===
-        fullscreen_vert = """
-        #version 330 core
-        layout(location = 0) in vec2 position;
-        out vec2 texCoord;
-        void main() {
-            texCoord = position * 0.5 + 0.5;
-            gl_Position = vec4(position, 0.0, 1.0);
-        }
-        """
-        fullscreen_frag = """
-        #version 330 core
-        uniform sampler2D uTexture;
-        in vec2 texCoord;
-        out vec4 FragColor;
-        void main() {
-            FragColor = texture(uTexture, texCoord);
-        }
-        """
-        vert = gl.glCreateShader(gl.GL_VERTEX_SHADER)
-        gl.glShaderSource(vert, fullscreen_vert)
-        gl.glCompileShader(vert)
-        frag = gl.glCreateShader(gl.GL_FRAGMENT_SHADER)
-        gl.glShaderSource(frag, fullscreen_frag)
-        gl.glCompileShader(frag)
-        self.program = gl.glCreateProgram()
-        gl.glAttachShader(self.program, vert)
-        gl.glAttachShader(self.program, frag)
-        gl.glLinkProgram(self.program)
-        gl.glDeleteShader(vert)
-        gl.glDeleteShader(frag)
-
-        # === Quad VAO/VBO/EBO setup ===
-        quad_v = np.array([[-1,  1],
-                           [ 1,  1],
-                           [ 1, -1],
-                           [-1, -1]], dtype=np.float32)
-        quad_f = np.array([0, 2, 1, 0, 3, 2], dtype=np.uint32)
-        self.vao = gl.glGenVertexArrays(1)
-        self.vbo = gl.glGenBuffers(1)
-        self.ebo = gl.glGenBuffers(1)
-        gl.glBindVertexArray(self.vao)
-        gl.glBindBuffer(gl.GL_ARRAY_BUFFER, self.vbo)
-        gl.glBufferData(gl.GL_ARRAY_BUFFER, quad_v.nbytes, quad_v, gl.GL_STATIC_DRAW)
-        gl.glEnableVertexAttribArray(0)
-        gl.glVertexAttribPointer(0, 2, gl.GL_FLOAT, False, 0, None)
-        gl.glBindBuffer(gl.GL_ELEMENT_ARRAY_BUFFER, self.ebo)
-        gl.glBufferData(gl.GL_ELEMENT_ARRAY_BUFFER, quad_f.nbytes, quad_f, gl.GL_STATIC_DRAW)
-        gl.glBindVertexArray(0)
+        gl.glTexImage2D(
+            gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8,
+            self.width, self.height, 0,
+            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE,
+            None
+        )
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
     def update_vsync(self) -> None:
         # Not used for CUDA renderer
@@ -234,7 +186,6 @@ class CUDARenderer(GaussianRenderBase):
         flip = np.eye(4, dtype=np.float32); flip[0,0] = -1.0
         view_mat = flip @ view_mat
         self.viewmats = torch.from_numpy(view_mat).to(self.device).unsqueeze(0)
-
     def update_camera_intrin(self) -> None:
         cam = self.world_settings.world_camera
         K = cam.get_intrinsics_matrix().astype(np.float32)
@@ -247,33 +198,30 @@ class CUDARenderer(GaussianRenderBase):
                         w, h, 0, gl.GL_RGBA, gl.GL_FLOAT, None)
         gl.glViewport(0, 0, w, h)
 
-    def draw(self) -> None:
-        # 1) Ensure camera is up-to-date
-        if self.viewmats is None:
+    def draw(self) -> int:
+        # 1) Ensure data and camera
+        if getattr(self, 'viewmats', None) is None:
             self.update_camera_pose()
-        if self.Ks    is None:
+        if getattr(self, 'Ks', None) is None:
             self.update_camera_intrin()
-
-        # 2) Flush any pending ROS updates into the main buffers
         self.write_through()
 
-        # 3) Snapshot under lock and bail if still uninitialized
+        # 2) Lock data
         with self._data_lock:
             if any(x is None for x in (
                 self.means, self.quats, self.scales,
                 self.opacities, self.colors,
                 self.viewmats, self.Ks
             )):
-                util.logger.error("Gaussian data not loaded")
-                return
-
+                util.logger.error("CUDARenderer: missing data")
+                return self.texture_id
             means, quats, scales = self.means, self.quats, self.scales
             opacs, colors        = self.opacities, self.colors
             viewmats, Ks         = self.viewmats, self.Ks
             sh_deg, w, h         = self.sh_degree, self.width, self.height
 
-        # 4) Rasterize outside the lock
-        colors_out, alphas, _ = rasterization(
+        # 3) Rasterize via CUDA
+        cols, alps, _ = rasterization(
             means=means, quats=quats, scales=scales,
             opacities=opacs, colors=colors,
             viewmats=viewmats, Ks=Ks,
@@ -281,19 +229,26 @@ class CUDARenderer(GaussianRenderBase):
             sh_degree=sh_deg,
             packed=True, tile_size=32,
             radius_clip=0.5, sparse_grad=True,
-            
         )
-        img  = torch.cat([colors_out, alphas], dim=-1)[0]
-        data = img.cpu().numpy().astype(np.float32)
+        img = torch.cat([cols, alps], dim=-1)[0].cpu().numpy()  # (H, W, 4), float32 [0,1]
+        max_val = img.max()
+        min_val = img.min()
+        mean_val = img.mean()
 
-        # 5) Upload to texture and draw
+        if max_val == 0.0 and mean_val == 0.0:
+            # Render solid black with full alpha
+            img8 = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+            img8[..., 3] = 255
+        else:
+            img8 = (np.clip(img, 0, 1) * 255).astype(np.uint8)
+
+        # 4) Upload image to GPU
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
-        gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, w, h,
-                           gl.GL_RGBA, gl.GL_FLOAT, data)
-        gl.glUseProgram(self.program)
-        gl.glActiveTexture(gl.GL_TEXTURE0)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
-        gl.glUniform1i(gl.glGetUniformLocation(self.program, "uTexture"), 0)
-        gl.glBindVertexArray(self.vao)
-        gl.glDrawElements(gl.GL_TRIANGLES, 6, gl.GL_UNSIGNED_INT, None)
-        gl.glBindVertexArray(0)
+        gl.glTexSubImage2D(
+            gl.GL_TEXTURE_2D, 0,
+            0, 0, w, h,
+            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE,
+            img8
+        )
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        return self.texture_id
