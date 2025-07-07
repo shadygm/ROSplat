@@ -86,8 +86,3 @@ class InputHandler:
             cam.process_roll(-direction)
         if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
             cam.process_roll(direction)
-
-
-
-
-s
