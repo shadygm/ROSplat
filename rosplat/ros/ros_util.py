@@ -13,8 +13,8 @@ import cv_bridge
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 import cv2
 
-import util
-import imgui_manager
+import rosplat.core.util as util
+import rosplat.gui.imgui_manager as imgui_manager
 
 try:
     from gaussian_interface.msg import SingleGaussian, GaussianArray

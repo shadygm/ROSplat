@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import OpenGL.GL as gl
 from PIL import Image
+from rosplat.config import RendererType
 
 # ImGui Bundle
 from imgui_bundle import (
@@ -15,18 +16,17 @@ from imgui_bundle import (
 )
 
 # Local modules
-import ros_util
-import util
-from ros_util import ROSNodeManager
+from rosplat.core import util
+from rosplat.ros import ROSNodeManager
 
 try:
-    from renderer.CUDARenderer import CUDARenderer
+    from rosplat.render.renderer import CUDARenderer
     import torch
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
     util.logger.warning("CUDARenderer not available. CUDA rendering will be disabled.")
-    from renderer.OpenGLRenderer import OpenGLRenderer
+    from rosplat.render.renderer import OpenGLRenderer
     util.logger.info("Using OpenGL Renderer")
 
 
@@ -113,11 +113,11 @@ def load_file() -> None:
 def _renderer_settings() -> None:
     imgui.text("Renderer:")
     if HAS_TORCH and torch.cuda.is_available():
-        options = ["CUDA Renderer", "OpenGL Renderer"]
-        current_idx = 0 if isinstance(world_settings.gauss_renderer, CUDARenderer) else 1
+        options = [RendererType.CUDA.value, RendererType.OPENGL.value]
+        current_idx = 0 if world_settings.get_renderer_type() == RendererType.CUDA else 1
         changed, current_idx = imgui.combo("Renderer", current_idx, options)
         if changed:
-            world_settings.switch_renderer("CUDA" if current_idx == 0 else "OpenGL")
+            world_settings.switch_renderer(RendererType.CUDA if current_idx == 0 else RendererType.OPENGL)
     if not isinstance(world_settings.gauss_renderer, CUDARenderer):
         imgui.text("OpenGL Renderer: Sorting needed.")
         if imgui.button("Sort and Update"):

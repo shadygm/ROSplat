@@ -4,6 +4,7 @@ from typing import List, Optional
 import numpy as np
 from plyfile import PlyData
 from dataclasses import dataclass
+from . import util
 
 
 @dataclass

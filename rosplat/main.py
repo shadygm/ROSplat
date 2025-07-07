@@ -5,10 +5,10 @@ import OpenGL.GL as gl
 import subprocess
 import rclpy
 
-from input_handler import InputHandler
-import util
-import imgui_manager
-from worldsettings import WorldSettings
+from rosplat.input import InputHandler
+from rosplat.core import util
+from rosplat.gui import main_ui
+from rosplat.config import WorldSettings
 
 ENABLE_EXPERIMENTS=False
 
@@ -118,7 +118,7 @@ class App:
 
             self.world_settings.gauss_renderer.draw()
             imgui.new_frame()
-            imgui_manager.main_ui(this_world_settings=self.world_settings)
+            main_ui(this_world_settings=self.world_settings)
 
             imgui.render()
             self.glfw_renderer.render(imgui.get_draw_data())

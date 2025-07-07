@@ -1,13 +1,14 @@
 import numpy as np
 from typing import Optional
 
-from camera import Camera
+from rosplat.render.camera import Camera
 from gaussian_interface.msg import SingleGaussian, GaussianArray
-import gaussian_representation
-from gaussian_representation import GaussianData
-from renderer.OpenGLRenderer import OpenGLRenderer
-from renderer.CUDARenderer import CUDARenderer
-import util
+import rosplat.core.gaussian_representation as gaussian_representation
+from rosplat.core.gaussian_representation import GaussianData
+from rosplat.render.renderer.OpenGLRenderer import OpenGLRenderer
+from rosplat.render.renderer.CUDARenderer import CUDARenderer
+from rosplat.core import util
+from enum import Enum, auto
 
 try:
     import torch
@@ -19,6 +20,14 @@ except ImportError:
 MAX_GAUSSIANS = 50_000_000
 
 
+class RendererType(Enum):
+    CUDA = "CUDA"
+    OPENGL = "OpenGL"
+    UNKNOWN = "Unknown"
+
+    def __str__(self):
+        return self.value
+
 class WorldSettings:
     """
     Manages world state including camera, Gaussian representation, and renderer.
@@ -29,7 +38,8 @@ class WorldSettings:
         self.window = None
         self.input_handler = None
         self.imgui_manager = None
-        self.gauss_renderer: Optional[OpenGLRenderer] = None
+        self.gauss_renderer = None
+        self.gauss_renderer_type = RendererType.UNKNOWN
 
         # Gaussian data and state flags
         self.gaussian_set = gaussian_representation.naive_gaussian()
@@ -100,12 +110,14 @@ class WorldSettings:
         try:
             if HAS_TORCH and torch.cuda.is_available():
                 self.gauss_renderer = CUDARenderer(self.world_camera.w, self.world_camera.h, self)
+                self.gauss_renderer_type = RendererType.CUDA
                 util.logger.info("CUDA renderer initialized.")
             else:
                 raise RuntimeError("Torch not installed or CUDA not available.")
         except Exception as e:
             util.logger.info(f"{e} Falling back to OpenGL renderer.")
             self.gauss_renderer = OpenGLRenderer(self.world_camera.w, self.world_camera.h, self)
+            self.gauss_renderer_type = RendererType.OPENGL
 
         self.update_activated_render_state()
 
@@ -141,25 +153,32 @@ class WorldSettings:
         return GaussianData(xyz, rot, scale, opacity, sh)
 
 
-    def switch_renderer(self, type: str) -> None:
+    def switch_renderer(self, type: RendererType) -> None:
         """
         Switch between CUDA and OpenGL renderers.
         """
-        type = type.lower()
         self.gauss_renderer = None
-
-        if type == "cuda":
+        if type == RendererType.CUDA:
             if not HAS_TORCH or not torch.cuda.is_available():
                 util.logger.error("CUDA renderer not available.")
                 return
             self.gauss_renderer = CUDARenderer(self.world_camera.w, self.world_camera.h, self)
-        elif type == "opengl":
+            self.gauss_renderer_type = RendererType.CUDA
+        elif type == RendererType.OPENGL:
             self.gauss_renderer = OpenGLRenderer(self.world_camera.w, self.world_camera.h, self)
+            self.gauss_renderer_type = RendererType.OPENGL
         else:
             util.logger.error(f"Unknown renderer type: {type}")
             return
 
         self.update_activated_render_state()
+
+    def get_renderer_type(self) -> str:
+        """
+        Return the type of the current renderer.
+        """
+        return self.gauss_renderer_type
+        
 
     def append_gaussian(self, gaussian: SingleGaussian) -> None:
         """

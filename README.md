@@ -68,8 +68,6 @@ Then, to build and run the Docker container:
 
 **Important:** Ensure the host machine's CUDA version matches the version specified in the Dockerfile. If you are using a CUDA version other than 12.6, update the Dockerfile accordingly.
 
-> **Note:** If you require CUDA-based rendering, you must install the `gsplat` library manually within the container after it is launched.
-
 Additionally, ensure you specify your GPU architecture under the `TORCH_CUDA_ARCH_LIST` variable in the Dockerfile. This is necessary for proper compilation of CUDA-based libraries. For example, if your GPU architecture is `8.6`, update the Dockerfile as follows:
 
     ENV TORCH_CUDA_ARCH_LIST="8.6"
@@ -93,10 +91,22 @@ ROSplat defines two custom ROS2 messages to handle Gaussian data, located in the
 
 #### 1\. SingleGaussian.msg
 
-    geometry_msgs/msg/Point xyz
-    geometry_msgs/msg/Quaternion rotation
-    float32 opacity
-    geometry_msgs/msg/Vector3 scale
+    # Gaussian.msg
+    
+    # 3D Pose
+    float32[3] xyz
+    
+    # Rotation as Quaternion
+    float32[4] rotation
+    
+    # Scale along each axis
+    float32[3] scale
+    
+    # Opacity
+    # Quantized as a number between 0-255 instead of 0-1
+    uint8 opacity
+    
+    # Spherical Harmonics
     float32[] spherical_harmonics
 
 #### 2\. GaussianArray.msg
@@ -120,8 +130,7 @@ Usage
 
 Once the Gaussian messages are built, you can launch the visualizer from the project's root directory:
 
-    cd src
-    python3 main.py
+    python3 -m rosplat.main
 
 ### Testing Gaussian Visualization
 
@@ -133,8 +142,8 @@ To test visualizing Gaussians over ROS2 messages:
 *   **Terminal 1:** Run the visualizer:
 
     ```bash
-    cd projects/ROSplat/src
-    python3 main.py
+    cd projects/ROSplat
+    python3 -m rosplat.main
     ```
 
 *   **Terminal 2:** Publish Gaussian data:

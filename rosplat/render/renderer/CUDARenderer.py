@@ -5,9 +5,10 @@ import torch
 import threading
 from gsplat import rasterization
 from OpenGL import GL as gl
-import util
-from renderer.base_gaussian_renderer import GaussianRenderBase
-from gaussian_representation import GaussianData
+import rosplat.core.util as util
+from rosplat.render.renderer.base_gaussian_renderer import GaussianRenderBase
+from rosplat.core.gaussian_representation import GaussianData
+import cupy as cp
 
 class CUDARenderer(GaussianRenderBase):
     def __init__(self, w: int, h: int, world_settings):

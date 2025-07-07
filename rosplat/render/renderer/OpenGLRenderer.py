@@ -1,8 +1,9 @@
+from pathlib import Path
 from OpenGL import GL as gl
 import numpy as np
-import util
+from rosplat.core import util
 import sys
-from renderer.base_gaussian_renderer import GaussianRenderBase
+from rosplat.render.renderer.base_gaussian_renderer import GaussianRenderBase
 wglSwapIntervalEXT = None
 
 # ---------------- Sorting Strategies ----------------
@@ -97,7 +98,10 @@ class OpenGLRenderer(GaussianRenderBase):
     def __init__(self, w: int, h: int, world_settings):
         super().__init__()
         gl.glViewport(0, 0, w, h)
-        self.program = util.load_shaders('./ui/shaders/gau_vert.glsl', './ui/shaders/gau_frag.glsl')
+        shader_dir = Path(__file__).parent / 'shaders'
+        vert_shader_path = shader_dir / 'gau_vert.glsl'
+        frag_shader_path = shader_dir / 'gau_frag.glsl'
+        self.program = util.load_shaders(str(vert_shader_path), str(frag_shader_path))
 
         self._prev_gaussian_count = 0
         self.gau_bufferid = None
@@ -196,7 +200,6 @@ class OpenGLRenderer(GaussianRenderBase):
         util.set_uniform_mat4(self.program, model_mat, "model_matrix")
 
     def draw(self) -> None:
-        util.logger.info("Drawing gaussians")
         if self.gaussians is None or len(self.gaussians) == 0:
             return
         gl.glUseProgram(self.program)
