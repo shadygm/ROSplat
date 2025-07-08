@@ -14,7 +14,6 @@ from imgui_bundle import (
     implot,
     portable_file_dialogs as pfd,
 )
-
 # Local modules
 from rosplat.core import util
 from rosplat.ros import ROSNodeManager
@@ -378,12 +377,16 @@ def main_ui(this_world_settings) -> None:
 
     if imgui.begin("Splat"):
         avail_w, avail_h = imgui.get_content_region_avail()
+        
         # Cast both to int
         avail_w = int(avail_w)
         avail_h = int(avail_h)
+
         this_world_settings.update_window_size(avail_w, avail_h)
         tex = this_world_settings.gauss_renderer.draw()
-        imgui.image(tex, (avail_w, avail_h))
+        vec2 = imgui.ImVec2(avail_w, avail_h)
+        imgui_tex = imgui.ImTextureRef(tex)
+        imgui.image(imgui_tex, vec2)
         if imgui.is_window_hovered():
             this_world_settings.check_inputs()
         imgui.end()

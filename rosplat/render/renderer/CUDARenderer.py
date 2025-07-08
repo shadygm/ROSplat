@@ -8,7 +8,6 @@ from OpenGL import GL as gl
 import rosplat.core.util as util
 from rosplat.render.renderer.base_gaussian_renderer import GaussianRenderBase
 from rosplat.core.gaussian_representation import GaussianData
-import cupy as cp
 
 class CUDARenderer(GaussianRenderBase):
     def __init__(self, w: int, h: int, world_settings):

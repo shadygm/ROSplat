@@ -49,7 +49,7 @@ RUN pip install --no-cache-dir --break-system-packages --ignore-installed -r req
 
 # Change this env variable to your own system requirements
 ENV TORCH_CUDA_ARCH_LIST="8.6" 
-RUN pip install --break-system-packages git+https://github.com/nerfstudio-project/gsplat.git
+RUN pip install --break-system-packages --no-cache-dir gsplat
 
 RUN pip install --break-system-packages "numpy<2"
 

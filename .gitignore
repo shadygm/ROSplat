@@ -41,5 +41,3 @@ log/
 venv/
 __pycache__/
 data/
-
-**/imgui.ini
