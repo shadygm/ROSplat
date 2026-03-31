@@ -4,7 +4,7 @@ imgui-bundle==1.6.2
 loguru==0.7.3
 numpy==1.26.4
 opencv-python==4.11.0.86
-pillow==11.1.0
+pillow==12.1.1
 plyfile==1.1
 pyglm==2.8.0
 PyOpenGL==3.1.4
