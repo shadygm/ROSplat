@@ -1,4 +1,5 @@
 from __future__ import annotations
+import math
 from pathlib import Path
 from typing import List, Optional
 import numpy as np
@@ -91,6 +92,25 @@ def naive_gaussian() -> GaussianData:
     return GaussianData(xyz, rot, scale, opacity, sh)
 
 
+def _infer_sh_degree(num_extra_features: int) -> int:
+    """Infer an SH degree from the number of non-DC RGB coefficients."""
+    if num_extra_features % 3 != 0:
+        raise ValueError(
+            f"Invalid spherical-harmonics layout: {num_extra_features} extra "
+            "features cannot be divided across RGB channels"
+        )
+
+    coefficients_per_channel = num_extra_features // 3 + 1
+    root = math.isqrt(coefficients_per_channel)
+    if root * root != coefficients_per_channel:
+        raise ValueError(
+            f"Invalid spherical-harmonics layout: found {num_extra_features} "
+            "extra features; supported SH degrees 0-3 use 0, 9, 24, or 45"
+        )
+
+    return root - 1
+
+
 def from_ply(ply_path: Path, max_sh_degree: int = 3) -> GaussianData:
     """
     Loads Gaussians from a PLY file and returns a GaussianData instance.
@@ -117,21 +137,30 @@ def from_ply(ply_path: Path, max_sh_degree: int = 3) -> GaussianData:
     features_dc[:, 1, 0] = np.asarray(element["f_dc_1"])
     features_dc[:, 2, 0] = np.asarray(element["f_dc_2"])
 
-    # Load extra SH features.
+    if not 0 <= max_sh_degree <= 3:
+        raise ValueError("max_sh_degree must be between 0 and 3")
+
+    # Load extra SH features. PLY files commonly store any degree from 0 to 3,
+    # so infer the available degree rather than requiring all degree-3 fields.
     extra_f_names = sorted(
         [prop.name for prop in element.properties if prop.name.startswith("f_rest_")],
         key=lambda x: int(x.split('_')[-1])
     )
-    expected_num = 3 * (max_sh_degree + 1) ** 2 - 3
-    if len(extra_f_names) != expected_num:
+    available_sh_degree = _infer_sh_degree(len(extra_f_names))
+    if available_sh_degree > 3:
         raise ValueError(
-            f"Unexpected number of extra features: found {len(extra_f_names)}, expected {expected_num}"
+            f"Unsupported SH degree {available_sh_degree}; ROSplat supports degrees 0-3"
         )
 
     features_extra = np.empty((xyz.shape[0], len(extra_f_names)), dtype=np.float32)
     for idx, attr_name in enumerate(extra_f_names):
         features_extra[:, idx] = np.asarray(element[attr_name])
-    features_extra = features_extra.reshape((xyz.shape[0], 3, (max_sh_degree + 1) ** 2 - 1))
+    available_extra_per_channel = (available_sh_degree + 1) ** 2 - 1
+    features_extra = features_extra.reshape(
+        (xyz.shape[0], 3, available_extra_per_channel)
+    )
+    requested_extra_per_channel = (min(available_sh_degree, max_sh_degree) + 1) ** 2 - 1
+    features_extra = features_extra[:, :, :requested_extra_per_channel]
     features_extra = np.transpose(features_extra, (0, 2, 1))
 
     # Load scales.

@@ -29,6 +29,7 @@ class CUDARenderer(GaussianRenderBase):
         self._cache_colors: List[torch.Tensor] = []
         self._cache_sh_deg: Optional[int] = None
 
+        self._texture_needs_clear = True
 
         # Create a single OpenGL texture
         self.texture_id = gl.glGenTextures(1)
@@ -66,8 +67,10 @@ class CUDARenderer(GaussianRenderBase):
             self._cache_opacs.clear()
             self._cache_colors.clear()
             self._cache_sh_deg = None
+            self._texture_needs_clear = True
         # Force memory cleanup
-        torch.cuda.empty_cache()
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
 
     def update_gaussian_data(self, gaussian_set: GaussianData, full_update: bool = False) -> None:
         if gaussian_set is None or len(gaussian_set) == 0:
@@ -78,7 +81,9 @@ class CUDARenderer(GaussianRenderBase):
         means = torch.from_numpy(gaussian_set.xyz.astype(np.float32)).to(self.device)
         quats = torch.from_numpy(gaussian_set.rot.astype(np.float32)).to(self.device)
         scales = torch.from_numpy(gaussian_set.scale.astype(np.float32)).to(self.device)
-        opacs = torch.from_numpy(gaussian_set.opacity.astype(np.float32).squeeze()).to(self.device)
+        # gsplat requires opacities to stay one-dimensional, including when a
+        # ROS message contains exactly one Gaussian.
+        opacs = torch.from_numpy(gaussian_set.opacity.astype(np.float32).reshape(-1)).to(self.device)
 
         total_sh = gaussian_set.sh_dim
         K = total_sh // 3
@@ -107,10 +112,13 @@ class CUDARenderer(GaussianRenderBase):
         merged into the main data only when write_through()
         is called (before each draw).
         """
+        if gaussian_set is None or len(gaussian_set) == 0:
+            return
+
         new_means  = torch.from_numpy(gaussian_set.xyz.astype(np.float32)).to(self.device)
         new_quats  = torch.from_numpy(gaussian_set.rot.astype(np.float32)).to(self.device)
         new_scales = torch.from_numpy(gaussian_set.scale.astype(np.float32)).to(self.device)
-        new_opacs  = torch.from_numpy(gaussian_set.opacity.astype(np.float32).squeeze()).to(self.device)
+        new_opacs  = torch.from_numpy(gaussian_set.opacity.astype(np.float32).reshape(-1)).to(self.device)
 
         total_sh = gaussian_set.sh_dim
         k = total_sh // 3
@@ -168,7 +176,6 @@ class CUDARenderer(GaussianRenderBase):
 
     def set_scale_modifier(self, modifier: float) -> None:
         self.scale_modifier = modifier
-        # TODO: apply to scales
 
     def set_model_matrix(self, model_mat: np.ndarray) -> None:
         self.model_matrix = model_mat.astype(np.float32)
@@ -181,9 +188,7 @@ class CUDARenderer(GaussianRenderBase):
 
     def update_camera_pose(self) -> None:
         cam = self.world_settings.world_camera
-        view_mat = cam.get_view_matrix().astype(np.float32)
-        flip = np.eye(4, dtype=np.float32); flip[0,0] = -1.0
-        view_mat = flip @ view_mat
+        view_mat = cam.get_view_matrix_opencv().astype(np.float32)
         self.viewmats = torch.from_numpy(view_mat).to(self.device).unsqueeze(0)
     def update_camera_intrin(self) -> None:
         cam = self.world_settings.world_camera
@@ -191,11 +196,33 @@ class CUDARenderer(GaussianRenderBase):
         self.Ks = torch.from_numpy(K).to(self.device).unsqueeze(0)
 
     def set_render_resolution(self, w: int, h: int) -> None:
+        w, h = int(w), int(h)
+        if w <= 0 or h <= 0 or (w == self.width and h == self.height):
+            return
+
         self.width, self.height = w, h
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
-        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGBA32F,
-                        w, h, 0, gl.GL_RGBA, gl.GL_FLOAT, None)
-        gl.glViewport(0, 0, w, h)
+        gl.glTexImage2D(
+            gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8,
+            w, h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None
+        )
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        self._texture_needs_clear = True
+
+    def _clear_texture(self) -> None:
+        """Clear a stale render after the scene becomes empty."""
+        if not self._texture_needs_clear:
+            return
+        empty = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
+        gl.glTexSubImage2D(
+            gl.GL_TEXTURE_2D, 0,
+            0, 0, self.width, self.height,
+            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE,
+            empty
+        )
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        self._texture_needs_clear = False
 
     def draw(self) -> int:
         # 1) Ensure data and camera
@@ -212,9 +239,10 @@ class CUDARenderer(GaussianRenderBase):
                 self.opacities, self.colors,
                 self.viewmats, self.Ks
             )):
-                util.logger.error("CUDARenderer: missing data")
+                self._clear_texture()
                 return self.texture_id
-            means, quats, scales = self.means, self.quats, self.scales
+            means, quats = self.means, self.quats
+            scales = self.scales * self.scale_modifier
             opacs, colors        = self.opacities, self.colors
             viewmats, Ks         = self.viewmats, self.Ks
             sh_deg, w, h         = self.sh_degree, self.width, self.height
@@ -242,4 +270,5 @@ class CUDARenderer(GaussianRenderBase):
             img8
         )
         gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        self._texture_needs_clear = False
         return self.texture_id

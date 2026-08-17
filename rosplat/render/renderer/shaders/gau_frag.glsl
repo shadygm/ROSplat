@@ -29,8 +29,7 @@ void main()
     float opacity = min(0.99f, alpha * exp(power));
     if (opacity < 1.f / 255.f)
         discard;
-    vec3 corrected_color = pow(color, vec3(1.0 / 2.2)); 
-    FragColor = vec4(corrected_color, opacity);
+    FragColor = vec4(max(color, vec3(0.0)), opacity);
 
     // handling special shading effect
     if (render_mod == -3)

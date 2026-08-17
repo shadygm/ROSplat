@@ -1,8 +1,17 @@
 import time
 from imgui_bundle import imgui
-from rosplat.config.world_settings import RendererType
-from rosplat.core import util
 import glfw
+
+
+CAMERA_MOVE_DIRECTIONS = {
+    glfw.KEY_W: (0, 1, 0),
+    glfw.KEY_S: (0, -1, 0),
+    glfw.KEY_A: (-1, 0, 0),
+    glfw.KEY_D: (1, 0, 0),
+    glfw.KEY_SPACE: (0, 0, 1),
+    glfw.KEY_LEFT_CONTROL: (0, 0, -1),
+}
+
 
 class InputHandler:
     def __init__(self, window, world_settings):
@@ -19,8 +28,6 @@ class InputHandler:
         self.last_mouse_pos = None
 
     def window_resize_callback(self, window, width, height):
-        self.cam.w = width
-        self.cam.h = height
         self.world_settings.update_window_size(width, height)
 
     def check_inputs(self):
@@ -30,9 +37,6 @@ class InputHandler:
         self.last_time = now
 
         cam = self.cam
-        invert_y = -1 if self.world_settings.get_renderer_type() == RendererType.OPENGL else 1
-        direction = invert_y  # used for roll and movement directions
-
         # Get current mouse state
         x, y = glfw.get_cursor_pos(self.window)
         left_pressed   = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT)   == glfw.PRESS
@@ -49,10 +53,10 @@ class InputHandler:
                 # Apply movement based on which button is pressed
                 if left_pressed:
                     cam.is_rotating = True
-                    cam.process_mouse_delta(dx, invert_y * -dy)
+                    cam.process_mouse_delta(dx, -dy)
                 if middle_pressed:
                     cam.is_panning = True
-                    cam.process_mouse_delta(dx, invert_y * -dy)
+                    cam.process_mouse_delta(dx, -dy)
             self.last_mouse_pos = (x, y)
         else:
             cam.is_rotating = False
@@ -64,26 +68,22 @@ class InputHandler:
         if io.mouse_wheel != 0.0:
             cam.process_scroll(0.0, io.mouse_wheel)
 
+        if io.want_text_input:
+            return
+
         # 6) Keyboard movement
         speed = cam.trans_sensitivity * dt
         if glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS:
             speed *= 3.0
 
-        moves = {
-            glfw.KEY_W: (0, -direction * speed, 0),
-            glfw.KEY_S: (0,  direction * speed, 0),
-            glfw.KEY_A: ( direction * speed, 0, 0),
-            glfw.KEY_D: (-direction * speed, 0, 0),
-            glfw.KEY_SPACE:       (0, 0, -speed),
-            glfw.KEY_LEFT_CONTROL:(0, 0, speed),
-        }
-
-        for key, (dx, dy, dz) in moves.items():
+        # Camera translation is expressed in local coordinates and is
+        # renderer-independent: +X right, +Y forward, +Z up.
+        for key, (dx, dy, dz) in CAMERA_MOVE_DIRECTIONS.items():
             if glfw.get_key(self.window, key) == glfw.PRESS:
-                cam.process_translation(dx, dy, dz)
+                cam.process_translation(dx * speed, dy * speed, dz * speed)
 
         # Camera roll
         if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
-            cam.process_roll(-direction)
+            cam.process_roll(-1)
         if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
-            cam.process_roll(direction)
+            cam.process_roll(1)

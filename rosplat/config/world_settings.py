@@ -80,8 +80,21 @@ class WorldSettings:
         """
         Update renderer's resolution to match window size.
         """
+        width, height = int(width), int(height)
+        if width <= 0 or height <= 0:
+            return
+
+        resized = (width, height) != (self.world_camera.w, self.world_camera.h)
+        if resized:
+            self.world_camera.w = width
+            self.world_camera.h = height
+            self.world_camera.dirty_intrinsic = True
+
         if self.gauss_renderer:
             self.gauss_renderer.set_render_resolution(width, height)
+            if resized:
+                self.gauss_renderer.update_camera_intrin()
+                self.world_camera.dirty_intrinsic = False
 
     def check_inputs(self) -> None:
         self.input_handler.check_inputs()
@@ -128,10 +141,6 @@ class WorldSettings:
         """
         Translate the camera in 3D space.
         """
-        if isinstance(self.gauss_renderer, CUDARenderer):
-            dx *= -1
-            dy *= -1
-
         self.world_camera.process_translation(
             dx * self.time_scale,
             dy * self.time_scale,
@@ -211,46 +220,54 @@ class WorldSettings:
         Append multiple Gaussians to the current set, or replace them entirely if a refresh is requested.
         """
         new_gaussians = [self.convert_gaussian(g) for g in gaussians.gaussians]
+        new_gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
 
         if gaussians.refresh:
             util.logger.info("Received refresh signal, clearing existing Gaussians.")
-            self.gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
+            self.gaussian_set = new_gaussian_set
             self.is_original = False
             self.brand_new = True
-            self.have_new_gaussians = True
 
             if self.gauss_renderer:
                 self.gauss_renderer.reset_gaussians()
-                self.gauss_renderer.add_gaussians_from_ros(self.gaussian_set)
+                if isinstance(self.gauss_renderer, CUDARenderer):
+                    if new_gaussian_set is not None:
+                        self.gauss_renderer.add_gaussians_from_ros(new_gaussian_set)
+                    self.have_new_gaussians = False
+                else:
+                    self.have_new_gaussians = new_gaussian_set is not None
+            return
+
+
+        if new_gaussian_set is None:
             return
 
         # Normal append path
         if isinstance(self.gauss_renderer, CUDARenderer):
-            if self.overwrite_gaussians or self.is_original:
-                self.gauss_renderer.reset_gaussians()
-
-            if self.is_original:
-                self.gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
+            replace = self.overwrite_gaussians or self.is_original
+            if replace:
+                self.gaussian_set = new_gaussian_set
                 self.gauss_renderer.reset_gaussians()
                 self.is_original = False
             else:
                 self.gaussian_set = gaussian_representation.combine_gaussians(
-                    [self.gaussian_set] + new_gaussians
+                    [self.gaussian_set, new_gaussian_set]
                 )
 
-            temp_gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
-            self.gauss_renderer.add_gaussians_from_ros(temp_gaussian_set)
+            self.brand_new = replace
+            self.have_new_gaussians = False
+            self.gauss_renderer.add_gaussians_from_ros(new_gaussian_set)
             return
 
         if len(self.gaussian_set) >= MAX_GAUSSIANS:
             return
 
         if self.overwrite_gaussians or self.is_original:
-            self.gaussian_set = gaussian_representation.combine_gaussians(new_gaussians)
+            self.gaussian_set = new_gaussian_set
             self.is_original = False
         else:
             self.gaussian_set = gaussian_representation.combine_gaussians(
-                [self.gaussian_set] + new_gaussians
+                [self.gaussian_set, new_gaussian_set]
             )
             self.brand_new = False
 
@@ -282,7 +299,10 @@ class WorldSettings:
         if not self.gauss_renderer:
             return
 
-        self.gauss_renderer.update_gaussian_data(self.gaussian_set, full_update=full_update)
+        if self.gaussian_set is None or len(self.gaussian_set) == 0:
+            self.gauss_renderer.reset_gaussians()
+        else:
+            self.gauss_renderer.update_gaussian_data(self.gaussian_set, full_update=full_update)
 
         if isinstance(self.gauss_renderer, OpenGLRenderer) and self.auto_sort:
             self.gauss_renderer.sort_and_update()

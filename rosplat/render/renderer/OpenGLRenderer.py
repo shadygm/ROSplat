@@ -222,7 +222,22 @@ class OpenGLRenderer(GaussianRenderBase):
         util.set_uniform_1int(self.program, mod, "render_mod")
 
     def set_render_resolution(self, w: int, h: int) -> None:
-        gl.glViewport(0, 0, w, h)
+        w, h = int(w), int(h)
+        if w <= 0 or h <= 0 or (w == self.width and h == self.height):
+            return
+
+        self.width, self.height = w, h
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture_id)
+        gl.glTexImage2D(
+            gl.GL_TEXTURE_2D, 0, gl.GL_RGBA8,
+            w, h, 0, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, None
+        )
+        gl.glBindRenderbuffer(gl.GL_RENDERBUFFER, self.depth_buffer)
+        gl.glRenderbufferStorage(
+            gl.GL_RENDERBUFFER, gl.GL_DEPTH_COMPONENT24, w, h
+        )
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+        gl.glBindRenderbuffer(gl.GL_RENDERBUFFER, 0)
 
     def update_camera_pose(self) -> None:
         camera = self.world_settings.world_camera
@@ -239,17 +254,22 @@ class OpenGLRenderer(GaussianRenderBase):
     def set_model_matrix(self, model_mat) -> None:
         util.set_uniform_mat4(self.program, model_mat, "model_matrix")
 
-    def draw(self) -> int:
-        if self.gaussians is None or len(self.gaussians) == 0:
-            return self.texture_id  # Return blank texture
+    def reset_gaussians(self) -> None:
+        self.gaussians = None
+        self._prev_gaussian_count = 0
 
+    def draw(self) -> int:
         # --- Bind the framebuffer to render into texture ---
         gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, self.fbo)
-        gl.glViewport(0, 0, self.world_settings.world_camera.w, self.world_settings.world_camera.h)
+        gl.glViewport(0, 0, self.width, self.height)
 
         # --- Clear the buffer ---
         gl.glClearColor(0.0, 0.0, 0.0, 0.0)
         gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+
+        if self.gaussians is None or len(self.gaussians) == 0:
+            gl.glBindFramebuffer(gl.GL_FRAMEBUFFER, 0)
+            return self.texture_id
 
         # --- Render ---
         gl.glUseProgram(self.program)
@@ -269,4 +289,3 @@ class OpenGLRenderer(GaussianRenderBase):
 
         # --- Return the texture that now contains the rendered image ---
         return self.texture_id
-
