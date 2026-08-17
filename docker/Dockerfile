@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
 
-FROM nvidia/cuda:13.3.1-devel-ubuntu26.04
+FROM ubuntu:26.04
 
 LABEL org.opencontainers.image.title="ROSplat"
-LABEL org.opencontainers.image.description="ROSplat development image with ROS 2 Lyrical and CUDA 13"
+LABEL org.opencontainers.image.description="ROSplat with ROS 2 Lyrical and Spirula Vulkan rendering"
 LABEL org.opencontainers.image.source="https://github.com/shadygm/ROSplat"
 
 ARG ROS_APT_SOURCE_VERSION=1.2.0
@@ -12,7 +12,6 @@ ARG USER_GID=1000
 
 ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DISTRO=lyrical \
-    CUDA_HOME=/usr/local/cuda \
     VIRTUAL_ENV=/opt/rosplat-venv \
     PATH=/opt/rosplat-venv/bin:${PATH} \
     HOME=/home/rosplat
@@ -22,6 +21,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
+        cmake \
         curl \
         locales \
         ninja-build \
@@ -40,7 +40,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libegl1 \
         libgl1 \
         libglvnd-dev \
+        libglfw3 \
         libglx0 \
+        libvulkan-dev \
         libx11-6 \
         libx11-xcb1 \
         libxcursor1 \
@@ -57,6 +59,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-lyrical-rosidl-default-generators \
         ros-lyrical-sensor-msgs \
         zenity \
+        vulkan-tools \
     && rm -rf /var/lib/apt/lists/*
 
 ENV LANG=en_US.UTF-8 \
@@ -64,10 +67,22 @@ ENV LANG=en_US.UTF-8 \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m venv --system-site-packages "${VIRTUAL_ENV}" \
-    && python -m pip install --upgrade pip "setuptools>=77,<80" wheel \
-    && python -m pip install \
-        torch==2.13.0 \
-        --index-url https://download.pytorch.org/whl/cu132
+    && python -m pip install --upgrade pip "setuptools>=77,<80" wheel
+
+COPY CMakeLists.txt /tmp/rosplat-native/CMakeLists.txt
+COPY native /tmp/rosplat-native/native
+COPY external/spirula-studio /tmp/rosplat-native/external/spirula-studio
+
+RUN cmake -S /tmp/rosplat-native -B /tmp/rosplat-native-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/rosplat-native \
+        -DROSPLAT_BUILD_TESTS=OFF \
+    && cmake --build /tmp/rosplat-native-build --target rosplat_spirula \
+        --parallel "$(nproc)" \
+    && cmake --install /tmp/rosplat-native-build \
+    && rm -rf /tmp/rosplat-native /tmp/rosplat-native-build
+
+ENV ROSPLAT_SPIRULA_LIBRARY=/opt/rosplat-native/lib/rosplat/librosplat_spirula.so
 
 COPY docker/requirements-docker.txt /tmp/requirements-docker.txt
 

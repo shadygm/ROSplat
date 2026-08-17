@@ -7,7 +7,7 @@ services:
       args:
         USER_UID: ${USER_UID:-1000}
         USER_GID: ${USER_GID:-1000}
-    image: rosplat:lyrical-cuda13.3
+    image: rosplat:lyrical-vulkan
     init: true
     network_mode: "host"
     ipc: host
@@ -19,10 +19,9 @@ services:
       - "nvidia.com/gpu=all"
     environment:
       DISPLAY: ${DISPLAY:-:0}
-      PYGLFW_LIBRARY_VARIANT: x11
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-graphics,display,utility}
       RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
-      TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST:-}
     volumes:
       - ../:/workspace
       - rosplat-cache:/home/rosplat/.cache

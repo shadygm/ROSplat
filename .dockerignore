@@ -3,5 +3,11 @@
 !docker/Dockerfile
 !docker/entrypoint.sh
 !docker/requirements-docker.txt
+!CMakeLists.txt
+!native/
+!native/**
+!external/
+!external/spirula-studio/
+!external/spirula-studio/**
 !gaussian_interface/
 !gaussian_interface/**

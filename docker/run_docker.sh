@@ -45,38 +45,12 @@ export DISPLAY="${DISPLAY:-:0}"
 export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
 
-detect_cuda_architectures() {
-    if ! command -v nvidia-smi >/dev/null 2>&1; then
-        return 0
-    fi
-
-    nvidia-smi \
-        --query-gpu=compute_cap \
-        --format=csv,noheader,nounits 2>/dev/null \
-        | sed 's/[[:space:]]//g' \
-        | awk '/^[0-9]+\.[0-9]+$/' \
-        | sort -Vu \
-        | paste -sd ';' -
-}
-
-if [[ -z "${TORCH_CUDA_ARCH_LIST:-}" ]]; then
-    export TORCH_CUDA_ARCH_LIST="$(detect_cuda_architectures)"
-fi
-
-if [[ -n "${TORCH_CUDA_ARCH_LIST}" ]]; then
-    echo "Using CUDA compute architecture(s): ${TORCH_CUDA_ARCH_LIST}"
-elif [[ "${OPEN_SHELL}" == true || "${RUN_APP}" == true ]]; then
-    echo "Could not detect a supported NVIDIA GPU compute capability." >&2
-    echo "Set TORCH_CUDA_ARCH_LIST explicitly to override detection." >&2
-    exit 3
-fi
-
 if [[ "${CLEAN}" == true ]]; then
     docker compose down --remove-orphans
 fi
 
 if [[ "${BUILD}" == true ]]; then
-    echo "Building ROSplat with ROS 2 Lyrical and CUDA 13.3..."
+    echo "Building ROSplat with ROS 2 Lyrical and Spirula Vulkan..."
     DOCKER_BUILDKIT=1 docker compose build "${BUILD_ARGS[@]}"
 fi
 

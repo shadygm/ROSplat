@@ -1,67 +1,29 @@
 #!/usr/bin/env python3
-"""Exercise ROS imports and one real gsplat CUDA rasterization."""
+"""Exercise ROS imports and one real Spirula Vulkan rasterization."""
 
-import os
-import sys
-from pathlib import Path
+from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import numpy as np
 
-import torch
-from gaussian_interface.msg import GaussianArray, SingleGaussian
-from gsplat import rasterization
+from gaussian_interface.msg import GaussianArray, SingleGaussian  # noqa: F401
 from rosplat.core.gaussian_representation import naive_gaussian
 from rosplat.render.camera import Camera
+from rosplat.render.renderer import SpirulaRenderer
 
 
 def main() -> None:
-    if os.environ.get("ROS_DISTRO") != "lyrical":
-        raise RuntimeError("ROS 2 Lyrical is not sourced")
-    if not torch.cuda.is_available():
-        raise RuntimeError("PyTorch cannot access an NVIDIA GPU")
-
-    device = torch.device("cuda")
-    gaussian_set = naive_gaussian()
     camera = Camera(64, 64)
-    means = torch.from_numpy(gaussian_set.xyz).to(device)
-    quats = torch.from_numpy(gaussian_set.rot).to(device)
-    scales = torch.from_numpy(gaussian_set.scale).to(device)
-    opacities = torch.from_numpy(gaussian_set.opacity.reshape(-1)).to(device)
-    colors = torch.from_numpy(gaussian_set.sh.reshape(-1, 1, 3)).to(device)
-    viewmats = torch.from_numpy(camera.get_view_matrix_opencv()).to(device).unsqueeze(0)
-    intrinsics = torch.from_numpy(camera.get_intrinsics_matrix()).to(device).unsqueeze(0)
-
-    rendered, alpha, _ = rasterization(
-        means=means,
-        quats=quats,
-        scales=scales,
-        opacities=opacities,
-        colors=colors,
-        viewmats=viewmats,
-        Ks=intrinsics,
-        width=64,
-        height=64,
-        packed=True,
-        sh_degree=0,
-    )
-
-    if rendered.shape != (1, 64, 64, 3):
-        raise RuntimeError(f"Unexpected render shape: {rendered.shape}")
-    if alpha.shape != (1, 64, 64, 1):
-        raise RuntimeError(f"Unexpected alpha shape: {alpha.shape}")
-    if not torch.isfinite(rendered).all() or not torch.isfinite(alpha).all():
-        raise RuntimeError("gsplat returned non-finite values")
-    if alpha.max().item() <= 0:
-        raise RuntimeError("Default camera culled every Gaussian")
-
-    message = GaussianArray()
-    message.gaussians.append(SingleGaussian())
-    capability = ".".join(str(part) for part in torch.cuda.get_device_capability())
+    world = SimpleNamespace(world_camera=camera)
+    renderer = SpirulaRenderer(64, 64, world)
+    renderer.update_gaussian_data(naive_gaussian(), full_update=True)
+    rgba = renderer.render_rgba8()
+    if not np.any(rgba[..., :3]):
+        raise RuntimeError("Spirula returned an all-black image")
     print(
-        f"ROS_DISTRO=lyrical torch={torch.__version__} "
-        f"cuda={torch.version.cuda} gpu={torch.cuda.get_device_name()} "
-        f"compute_capability={capability} render_shape={tuple(rendered.shape)}"
+        f"ROS_DISTRO=lyrical backend=spirula-vulkan "
+        f"splats={renderer.splat_count} render_shape={renderer.latest_rgba.shape}"
     )
+    renderer.shutdown()
 
 
 if __name__ == "__main__":
