@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from imgui_bundle import hello_imgui
 
 from rosplat.core import util
 from rosplat.core.gaussian_representation import GaussianData
@@ -119,12 +118,20 @@ class _Bridge:
 class SpirulaRenderer(GaussianRenderBase):
     """Spirula's Vulkan 3DGS renderer with an ImGui-compatible texture."""
 
-    def __init__(self, width: int, height: int, world_settings, bridge=None) -> None:
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        world_settings,
+        bridge=None,
+        texture_registry=None,
+    ) -> None:
         super().__init__()
         self.width = int(width)
         self.height = int(height)
         self.world_settings = world_settings
         self._bridge = bridge if bridge is not None else _Bridge()
+        self._texture_registry = texture_registry
         self._texture = None
         self._rgba = np.zeros((self.height, self.width, 4), dtype=np.uint8)
         self._model_matrix = np.eye(4, dtype=np.float32)
@@ -133,6 +140,7 @@ class SpirulaRenderer(GaussianRenderBase):
         self._scene_ready = False
         self._camera_dirty = True
         self._render_dirty = True
+        self._texture_dirty = True
 
         count = self._bridge.lib.rosplat_spirula_device_count()
         if count < 0:
@@ -237,6 +245,7 @@ class SpirulaRenderer(GaussianRenderBase):
             self._texture = None
             self._camera_dirty = True
             self._render_dirty = True
+            self._texture_dirty = True
 
     def set_model_matrix(self, model_matrix) -> None:
         matrix = np.ascontiguousarray(model_matrix, dtype=np.float32)
@@ -263,7 +272,7 @@ class SpirulaRenderer(GaussianRenderBase):
         return
 
     def update_vsync(self) -> None:
-        # HelloImGui owns the Vulkan swapchain and present mode.
+        # rendercanvas/wgpu owns the Vulkan swapchain and present mode.
         return
 
     def update_camera_pose(self) -> None:
@@ -296,19 +305,27 @@ class SpirulaRenderer(GaussianRenderBase):
         )
         self._camera_dirty = False
 
-    def draw(self) -> int:
+    def render_rgba8(self) -> np.ndarray:
+        """Render into the reusable host RGBA8 buffer without requiring a UI."""
         self._sync_camera()
-        if self._render_dirty or self._texture is None:
+        if self._render_dirty:
             self._bridge.require(
                 self._bridge.lib.rosplat_spirula_render_rgba8(
                     _as_pointer(self._rgba), self._rgba.nbytes
                 )
             )
-            # HelloImGui creates a backend-native texture. With the Vulkan
-            # runner this is a VkImage + descriptor, never an OpenGL texture.
-            self._texture = hello_imgui.create_texture_gpu_from_rgba_data(self._rgba)
             self._render_dirty = False
-        return self._texture.texture_id()
+            self._texture_dirty = True
+        return self._rgba
+
+    def draw(self):
+        self.render_rgba8()
+        if self._texture_dirty:
+            if self._texture_registry is None:
+                raise SpirulaError("The Vulkan ImGui texture registry is not initialized")
+            self._texture = self._texture_registry.upload(self, self._rgba)
+            self._texture_dirty = False
+        return self._texture
 
     @property
     def splat_count(self) -> int:
@@ -323,5 +340,7 @@ class SpirulaRenderer(GaussianRenderBase):
         return self._rgba
 
     def shutdown(self) -> None:
+        if self._texture_registry is not None:
+            self._texture_registry.release(self)
         self._texture = None
         self._bridge.lib.rosplat_spirula_shutdown()

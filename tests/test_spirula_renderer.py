@@ -1,6 +1,6 @@
 import ctypes
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import numpy as np
 
@@ -94,11 +94,20 @@ def gaussian_batch():
     )
 
 
-def make_renderer(width=320, height=180):
+def make_renderer(width=320, height=180, texture_registry=None):
     camera = Camera(height, width)
     settings = SimpleNamespace(world_camera=camera)
     bridge = FakeBridge()
-    return SpirulaRenderer(width, height, settings, bridge=bridge), bridge
+    return (
+        SpirulaRenderer(
+            width,
+            height,
+            settings,
+            bridge=bridge,
+            texture_registry=texture_registry,
+        ),
+        bridge,
+    )
 
 
 def test_append_converts_activated_rosplat_values_to_spirula_layout():
@@ -140,16 +149,25 @@ def test_camera_uses_vertical_fov_and_model_transform():
 
 
 def test_draw_uploads_a_vulkan_texture_only_when_render_is_dirty():
-    renderer, bridge = make_renderer(8, 4)
-    texture = SimpleNamespace(texture_id=Mock(return_value=42))
+    texture = object()
+    texture_registry = Mock()
+    texture_registry.upload.return_value = texture
+    renderer, bridge = make_renderer(8, 4, texture_registry=texture_registry)
 
-    with patch(
-        "rosplat.render.renderer.SpirulaRenderer.hello_imgui.create_texture_gpu_from_rgba_data",
-        return_value=texture,
-    ) as create_texture:
-        assert renderer.draw() == 42
-        assert renderer.draw() == 42
+    assert renderer.draw() is texture
+    assert renderer.draw() is texture
 
     bridge.lib.rosplat_spirula_render_rgba8.assert_called_once()
-    create_texture.assert_called_once()
+    texture_registry.upload.assert_called_once_with(renderer, renderer.latest_rgba)
     assert np.all(renderer._rgba == 127)
+
+
+def test_headless_render_does_not_require_a_texture_registry():
+    renderer, bridge = make_renderer(8, 4)
+
+    first = renderer.render_rgba8()
+    second = renderer.render_rgba8()
+
+    assert first is second
+    assert first.shape == (4, 8, 4)
+    bridge.lib.rosplat_spirula_render_rgba8.assert_called_once()

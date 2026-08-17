@@ -6,7 +6,6 @@ from PIL import Image
 
 # ImGui Bundle
 from imgui_bundle import (
-    hello_imgui,
     imgui,
     immapp,
     implot,
@@ -202,8 +201,8 @@ def display_frames_tab() -> None:
         if frame.shape[-1] == 3:
             alpha = np.full((*frame.shape[:2], 1), 255, dtype=np.uint8)
             frame = np.concatenate((frame, alpha), axis=-1)
-        static.image_texture = hello_imgui.create_texture_gpu_from_rgba_data(
-            np.ascontiguousarray(frame, dtype=np.uint8)
+        static.image_texture = world_settings.texture_registry.upload(
+            "ros-image-frame", np.ascontiguousarray(frame, dtype=np.uint8)
         )
 
     frame = static.last_frame
@@ -221,7 +220,7 @@ def display_frames_tab() -> None:
         )
         implot.plot_image(
             "Frame",
-            static.image_texture.texture_id(),
+            static.image_texture,
             (0, 0),
             (avail_w, avail_h)
         )
@@ -323,8 +322,7 @@ def main_ui(this_world_settings) -> None:
             this_world_settings.update_window_size(avail_w, avail_h)
             tex = this_world_settings.gauss_renderer.draw()
             vec2 = imgui.ImVec2(avail_w, avail_h)
-            imgui_tex = imgui.ImTextureRef(tex)
-            imgui.image(imgui_tex, vec2)
+            imgui.image(tex, vec2)
             if imgui.is_window_hovered():
                 this_world_settings.check_inputs()
         imgui.end()

@@ -1,5 +1,8 @@
 numpy<2
 imgui-bundle
+wgpu
+rendercanvas
+glfw
 empy==3.3.4
 imageio
 loguru

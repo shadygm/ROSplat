@@ -7,6 +7,9 @@ setup(
     install_requires=[
         "numpy",
         "imgui-bundle",
+        "wgpu",
+        "rendercanvas",
+        "glfw",
         "pillow",
         "loguru",
         "plyfile",

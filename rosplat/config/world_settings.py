@@ -31,6 +31,7 @@ class WorldSettings:
     def __init__(self) -> None:
         self.world_camera = Camera(720, 1280)
         self.input_handler = None
+        self.texture_registry = None
         self.gauss_renderer: Optional[SpirulaRenderer] = None
         self.gauss_renderer_type = RendererType.UNKNOWN
 
@@ -92,13 +93,15 @@ class WorldSettings:
     def get_camera_pose(self):
         return self.world_camera.get_pose()
 
-    def create_gaussian_renderer(self) -> None:
+    def create_gaussian_renderer(self, texture_registry=None) -> None:
         if self.gauss_renderer:
             self.gauss_renderer.shutdown()
+        self.texture_registry = texture_registry
         self.gauss_renderer = SpirulaRenderer(
             self.world_camera.w,
             self.world_camera.h,
             self,
+            texture_registry=texture_registry,
         )
         self.gauss_renderer_type = RendererType.SPIRULA_VULKAN
         self._full_scene_dirty = True

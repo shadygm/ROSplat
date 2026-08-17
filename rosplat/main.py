@@ -1,21 +1,33 @@
-from imgui_bundle import hello_imgui, imgui, immapp
+import os
+
+os.environ.setdefault("WGPU_BACKEND_TYPE", "Vulkan")
+
+from imgui_bundle import imgui
 import rclpy
+import wgpu
+from rendercanvas.auto import RenderCanvas, loop
+from wgpu.utils.imgui import ImguiRenderer
 
 from rosplat.config import WorldSettings
 from rosplat.gui import main_ui, shutdown_ros
+from rosplat.gui.vulkan_texture import VulkanTextureRegistry
 from rosplat.input import InputHandler
 
 
 class App:
-    """ROSplat's Python UI running on HelloImGui's Vulkan backend."""
+    """ROSplat's Dear ImGui UI running through wgpu-py's Vulkan backend."""
 
     def __init__(self) -> None:
         self.world_settings = WorldSettings()
         self.world_camera = self.world_settings.world_camera
+        self.canvas = None
+        self.imgui_renderer = None
+        self.texture_registry = None
+        self._shutdown_done = False
 
     def post_init(self) -> None:
         self.world_settings.input_handler = InputHandler(self.world_settings)
-        self.world_settings.create_gaussian_renderer()
+        self.world_settings.create_gaussian_renderer(self.texture_registry)
 
     def update_camera_lazy(self) -> None:
         if self.world_camera.dirty_pose:
@@ -36,29 +48,47 @@ class App:
         main_ui(this_world_settings=self.world_settings)
 
     def shutdown(self) -> None:
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
         self.world_settings.shutdown()
+        if self.texture_registry is not None:
+            self.texture_registry.shutdown()
         shutdown_ros()
         if rclpy.ok():
             rclpy.shutdown()
 
     def run(self) -> None:
-        params = hello_imgui.RunnerParams()
-        params.app_window_params.window_title = "ROSplat"
-        params.app_window_params.window_geometry.size = (1280, 720)
-        params.app_window_params.restore_previous_geometry = True
-        params.platform_backend_type = hello_imgui.PlatformBackendType.glfw
-        params.renderer_backend_type = hello_imgui.RendererBackendType.vulkan
-        params.imgui_window_params.default_imgui_window_type = (
-            hello_imgui.DefaultImGuiWindowType.no_default_window
+        self.canvas = RenderCanvas(
+            title="ROSplat",
+            size=(1280, 720),
+            max_fps=60,
+            update_mode="continuous",
         )
-        params.imgui_window_params.enable_viewports = False
-        params.ini_filename = "imgui.ini"
-        params.ini_filename_use_app_window_title = False
-        params.fps_idling.enable_idling = False
-        params.callbacks.post_init = self.post_init
-        params.callbacks.show_gui = self.show_gui
-        params.callbacks.before_exit = self.shutdown
-        immapp.run(params)
+        adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
+        if adapter is None:
+            raise RuntimeError("No WebGPU adapter was available")
+        if adapter.info["backend_type"].lower() != "vulkan":
+            raise RuntimeError(
+                "ROSplat requires wgpu's Vulkan backend, got "
+                f"{adapter.info['backend_type']}"
+            )
+        device = adapter.request_device_sync()
+        self.imgui_renderer = ImguiRenderer(device, self.canvas)
+        self.texture_registry = VulkanTextureRegistry(
+            device, self.imgui_renderer.backend
+        )
+
+        io = imgui.get_io()
+        io.config_flags |= imgui.ConfigFlags_.docking_enable
+        io.set_ini_filename("imgui.ini")
+        self.post_init()
+        self.imgui_renderer.set_gui(self.show_gui)
+        self.canvas.request_draw(self.imgui_renderer.render)
+        try:
+            loop.run()
+        finally:
+            self.shutdown()
 
 
 def main() -> None:
