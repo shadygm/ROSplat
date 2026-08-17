@@ -1,5 +1,4 @@
 from .base_gaussian_renderer import GaussianRenderBase
-from .OpenGLRenderer import OpenGLRenderer
-from .CUDARenderer import CUDARenderer
+from .SpirulaRenderer import SpirulaRenderer, SpirulaError
 
-__all__ = ['GaussianRenderBase', 'OpenGLRenderer', 'CUDARenderer']
+__all__ = ['GaussianRenderBase', 'SpirulaRenderer', 'SpirulaError']
