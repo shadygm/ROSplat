@@ -1,0 +1,7 @@
+**
+!.dockerignore
+!docker/Dockerfile
+!docker/entrypoint.sh
+!docker/requirements-docker.txt
+!gaussian_interface/
+!gaussian_interface/**

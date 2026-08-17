@@ -1,0 +1,32 @@
+name: Build ROSplat Docker - Lyrical
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-lyrical:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Build ROS 2 Lyrical and CUDA 13 image
+        working-directory: ./docker
+        run: ./run_docker.sh -b
+
+      - name: Smoke test ROS and Python dependencies
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            rosplat:lyrical-cuda13.3 \
+            bash -c '
+              test "$ROS_DISTRO" = lyrical &&
+              ros2 interface show gaussian_interface/msg/GaussianArray &&
+              python3 -c "import glfw, gsplat, imgui_bundle, rclpy, torch; from gaussian_interface.msg import GaussianArray" &&
+              python3 -m unittest discover -s tests
+            '
