@@ -7,7 +7,7 @@ import rclpy
 
 from rosplat.input import InputHandler
 from rosplat.core import util
-from rosplat.gui import main_ui
+from rosplat.gui import main_ui, shutdown_ros
 from rosplat.config import WorldSettings
 
 ENABLE_EXPERIMENTS=False
@@ -161,8 +161,6 @@ class App:
 
             glfw.swap_buffers(self.window)
 
-        glfw.terminate()
-
     def shutdown(self):
         glfw.terminate()
 
@@ -183,8 +181,10 @@ def main():
     try:
         app.run()
     finally:
+        shutdown_ros()
         app.shutdown()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

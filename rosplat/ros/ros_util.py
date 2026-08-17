@@ -9,12 +9,11 @@ from rclpy.executors import SingleThreadedExecutor, MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo, PointCloud2, Imu
 from geometry_msgs.msg import PoseStamped
-import cv_bridge
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-import cv2
 
 import rosplat.core.util as util
 import rosplat.gui.imgui_manager as imgui_manager
+from rosplat.ros.image_conversion import image_to_rgb8
 
 try:
     from gaussian_interface.msg import SingleGaussian, GaussianArray
@@ -70,7 +69,6 @@ class SingleNode(Node):
         super().__init__(node_name)
         self.topic_name = topic_name
         self.msg_type = msg_type
-        self.bridge = cv_bridge.CvBridge()
 
         qos = QoSProfile(depth=1000)
         qos.reliability = ReliabilityPolicy.RELIABLE
@@ -119,10 +117,10 @@ class SingleNode(Node):
 
     def update_image(self, msg) -> None:
         """
-        Convert the ROS image message to OpenCV format and update the UI.
+        Convert the ROS image message to an RGB NumPy array and update the UI.
         """
         try:
-            img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            img = image_to_rgb8(msg)
             imgui_manager.set_image(img)
         except Exception as e:
             util.logger.error(f"Error converting image: {e}")
@@ -151,6 +149,7 @@ class ROSNodeManager:
         self.nodes: Dict[str, SingleNode] = {}
         self.node_idx_counter: int = 0
         self._lock = threading.Lock()
+        self._is_shutdown = False
 
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
@@ -209,12 +208,24 @@ class ROSNodeManager:
         Shutdown the executor and clean up all nodes.
         """
         with self._lock:
-            for topic_name, node in list(self.nodes.items()):
-                self.kill_listener(topic_name)
+            if self._is_shutdown:
+                return
+            self._is_shutdown = True
+            nodes = list(self.nodes.items())
+            self.nodes.clear()
+
+        for topic_name, node in nodes:
+            self.executor.remove_node(node)
+            node.destroy()
+            util.logger.info(f"Killed listener for topic {topic_name}")
 
         self.executor.remove_node(self._graph)
         self._graph.shutdown()
         self.executor.shutdown()
+        if self._thread.is_alive():
+            self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            util.logger.warning("ROS executor thread did not stop within five seconds.")
         util.logger.info("ROSNodeManager shutdown complete.")
 
 class GraphWatcher(Node):

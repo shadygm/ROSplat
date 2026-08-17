@@ -1,7 +1,6 @@
 import queue
 from datetime import datetime
 
-import cv2
 import numpy as np
 import OpenGL.GL as gl
 from PIL import Image
@@ -40,6 +39,11 @@ type_visualization = [
     "Gaussian Ball", "Flat Ball", "Billboard",
     "Depth", "SH:0", "SH:0~1", "SH:0~2", "SH:0~3 (default)"
 ]
+
+
+def shutdown_ros() -> None:
+    """Stop ROS listeners and their executor before rclpy is shut down."""
+    ros_node_manager.shutdown()
 
 # IMU history
 accel_x, accel_y, accel_z = [], [], []
@@ -103,7 +107,10 @@ def load_file() -> None:
     if static.open_file_dialog and static.open_file_dialog.ready():
         file = static.open_file_dialog.result()
         if file and file[0].lower().endswith(".ply"):
-            world_settings.load_ply(file[0])
+            try:
+                world_settings.load_ply(file[0])
+            except (OSError, ValueError) as error:
+                util.logger.error(f"Could not load PLY '{file[0]}': {error}")
         elif file:
             util.logger.error(f"Selected file is not a PLY file: {file[0]}")
         static.open_file_dialog = None
@@ -382,11 +389,20 @@ def main_ui(this_world_settings) -> None:
         avail_w = int(avail_w)
         avail_h = int(avail_h)
 
-        this_world_settings.update_window_size(avail_w, avail_h)
-        tex = this_world_settings.gauss_renderer.draw()
-        vec2 = imgui.ImVec2(avail_w, avail_h)
-        imgui_tex = imgui.ImTextureRef(tex)
-        imgui.image(imgui_tex, vec2)
-        if imgui.is_window_hovered():
-            this_world_settings.check_inputs()
+        if avail_w > 0 and avail_h > 0:
+            this_world_settings.update_window_size(avail_w, avail_h)
+            tex = this_world_settings.gauss_renderer.draw()
+            vec2 = imgui.ImVec2(avail_w, avail_h)
+            imgui_tex = imgui.ImTextureRef(tex)
+            if this_world_settings.get_renderer_type() == RendererType.OPENGL:
+                imgui.image(
+                    imgui_tex,
+                    vec2,
+                    imgui.ImVec2(0.0, 1.0),
+                    imgui.ImVec2(1.0, 0.0),
+                )
+            else:
+                imgui.image(imgui_tex, vec2)
+            if imgui.is_window_hovered():
+                this_world_settings.check_inputs()
         imgui.end()
