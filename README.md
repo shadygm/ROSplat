@@ -23,62 +23,46 @@ Features
 Setup
 -----
 
-This project was developed and tested on **Ubuntu 24.04 LTS** using **ROS2 Jazzy**. Please note: **Performance degrades significantly without an NVIDIA graphics card.**
+The supported container targets **Ubuntu 26.04 LTS**, **ROS 2 Lyrical**, and **CUDA 13.3**. ROSplat can fall back to its OpenGL renderer, but the CUDA renderer requires an NVIDIA GPU.
 
 ### Dependencies
 
-*   **Mandatory:** ROS2 (tested on ROS2 Jazzy)
-*   **Optional (for GPU-based Sorting):**
-    *   `cupy` (ensure compatibility with your CUDA version)
-    *   `torch` (if using PyTorch for GPU sorting)
-    *   `gsplat` (for CUDA-based rendering)
+*   Docker with the Compose plugin
+*   An NVIDIA driver compatible with CUDA 13
+*   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
-To install the optional GPU-based libraries individually:
-
-    pip install cupy-cuda12x  # Install Cupy (replace 12x with your CUDA version)
-
-    pip install torch         # Install PyTorch
-
-    pip install git+https://github.com/nerfstudio-project/gsplat.git # Install gsplat for CUDA-based rendering
-The program will automatically prioritize sorting methods in the following order: **1) Torch → 2) Cupy → 3) CPU**
-
-
-To install all dependencies at once:
-
-    pip install -r requirements.txt        # For GPU acceleration
-
-
-    pip install -r requirements-no-gpu.txt  # Without GPU acceleration
+The Docker image contains ROS, CUDA, PyTorch, gsplat, the GUI dependencies, and the generated `gaussian_interface` messages. A separate host CUDA toolkit is not required.
 
 ### Docker-Based Setup
 
-Alternatively, you can set up the project using Docker. A setup script is available under the `docker` directory.
+Docker is the supported setup path. On Arch Linux, install the NVIDIA Container Toolkit once:
 
-Before running Docker, ensure you have installed:
+    sudo pacman -S --needed nvidia-container-toolkit
 
-    sudo apt-get install -y nvidia-container-toolkit
+The Compose service requests every available GPU through the toolkit's CDI device. Confirm the CDI devices are visible with:
 
-This enables GPU communication between the host and the container. If you come across any other issues, follow the instructions under [the official NVIDIA guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+    nvidia-ctk cdi list
 
-Then, to build and run the Docker container:
+Then build and run ROSplat:
 
     cd docker
-    ./run_docker.sh -h    # Display help and usage instructions
-    ./run_docker.sh -bu   # Build the Docker image and launch the container with docker-compose
+    ./run_docker.sh -b    # Build rosplat:lyrical-cuda13.3
+    ./run_docker.sh -r    # Start the container and launch ROSplat
 
-**Important:** Ensure the host machine's CUDA version matches the version specified in the Dockerfile. If you are using a CUDA version other than 12.6, update the Dockerfile accordingly.
+For an interactive development shell or cleanup:
 
-Additionally, ensure you specify your GPU architecture under the `TORCH_CUDA_ARCH_LIST` variable in the Dockerfile. This is necessary for proper compilation of CUDA-based libraries. For example, if your GPU architecture is `8.6`, update the Dockerfile as follows:
+    ./run_docker.sh -u
+    ./run_docker.sh -c
 
-    ENV TORCH_CUDA_ARCH_LIST="8.6"
+After starting the container, verify ROS imports and a real gsplat CUDA kernel with:
 
-Refer to [NVIDIA's CUDA GPU support matrix](https://developer.nvidia.com/cuda-gpus) to find the correct architecture for your GPU.
+    docker compose exec rosplat rosplat-entrypoint python3 docker/smoke_test.py
 
-#### Accessing ROSplat Inside the Container
+The launch script queries all installed GPUs with `nvidia-smi` and passes their compute capabilities to gsplat through `TORCH_CUDA_ARCH_LIST`. Duplicate architectures are removed automatically. You can override detection when needed:
 
-After starting the Docker container, navigate to the project directory inside the container:
+    TORCH_CUDA_ARCH_LIST=8.9 ./run_docker.sh -r
 
-    cd projects/ROSplat
+Refer to [NVIDIA's CUDA GPU support matrix](https://developer.nvidia.com/cuda-gpus) for the correct compute capability.
 
 Building the Gaussian Messages
 ------------------------------
@@ -113,7 +97,7 @@ ROSplat defines two custom ROS2 messages to handle Gaussian data, located in the
 
     gaussian_interface/SingleGaussian[] gaussians
 
-### Building the Messages
+### Building the Messages Without Docker
 
 **a) Build your workspace using colcon:**
 
@@ -128,7 +112,7 @@ ROSplat defines two custom ROS2 messages to handle Gaussian data, located in the
 Usage
 -----
 
-Once the Gaussian messages are built, you can launch the visualizer from the project's root directory:
+Inside the Docker container the messages are already built and sourced. For a manual installation, build the messages first and then launch the visualizer from the project's root directory:
 
     python3 -m rosplat.main
 
@@ -137,23 +121,21 @@ Once the Gaussian messages are built, you can launch the visualizer from the pro
 To test visualizing Gaussians over ROS2 messages:
 
 1.  Place your `PLY` file under the `data/` directory.
-2.  Open **two terminals inside the Docker container**:
+2.  Start the container with `./run_docker.sh -u` in two terminals:
 
 *   **Terminal 1:** Run the visualizer:
 
     ```bash
-    cd projects/ROSplat
-    python3 -m rosplat.main
+        python3 -m rosplat.main
     ```
 
 *   **Terminal 2:** Publish Gaussian data:
 
     ```bash
-    cd projects/ROSplat/misc
-    python3 generate_gaussian_bag.py --ply_path ../data/your_file.ply
+        python3 misc/generate_gaussian_bag.py --ply-path data/your_file.ply
     ```
 
-The `generate_gaussian_bag.py` script will continuously publish batches of Gaussian messages to the `/gaussian_test` topic, which the visualizer will display in real time whenever you are subscribed to it.
+The `generate_gaussian_bag.py` script waits for a subscriber, then publishes the scene once in bounded batches on `/gaussian_test`. In ROSplat, select that topic in **ROS Settings** and click **Add** to begin the stream.
 
 Contributions
 -------------
