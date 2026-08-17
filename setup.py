@@ -6,14 +6,10 @@ setup(
     packages=find_packages(),
     install_requires=[
         "numpy",
-        "PyOpenGL",
         "imgui-bundle",
         "pillow",
         "loguru",
         "plyfile",
-        "torch",
-        "gsplat",
-        "cupy-cuda11x"
     ],
     entry_points={
         "console_scripts": [

@@ -318,6 +318,10 @@ class SpirulaRenderer(GaussianRenderBase):
     def capacity(self) -> int:
         return int(self._bridge.lib.rosplat_spirula_capacity())
 
+    @property
+    def latest_rgba(self) -> np.ndarray:
+        return self._rgba
+
     def shutdown(self) -> None:
         self._texture = None
         self._bridge.lib.rosplat_spirula_shutdown()

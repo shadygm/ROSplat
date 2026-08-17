@@ -1,34 +1,28 @@
 import time
 from imgui_bundle import imgui
-import glfw
 
 
 CAMERA_MOVE_DIRECTIONS = {
-    glfw.KEY_W: (0, 1, 0),
-    glfw.KEY_S: (0, -1, 0),
-    glfw.KEY_A: (-1, 0, 0),
-    glfw.KEY_D: (1, 0, 0),
-    glfw.KEY_SPACE: (0, 0, 1),
-    glfw.KEY_LEFT_CONTROL: (0, 0, -1),
+    imgui.Key.w: (0, 1, 0),
+    imgui.Key.s: (0, -1, 0),
+    imgui.Key.a: (-1, 0, 0),
+    imgui.Key.d: (1, 0, 0),
+    imgui.Key.space: (0, 0, 1),
+    imgui.Key.left_ctrl: (0, 0, -1),
 }
 
 
 class InputHandler:
-    def __init__(self, window, world_settings):
+    def __init__(self, world_settings):
         """
         Handles free-flight camera movement using ImGui input API.
         Reimplements original behavior using new-style polling.
         """
-        self.window = window
         self.world_settings = world_settings
         self.cam = world_settings.world_camera
 
         self.last_time = time.time()
-        glfw.set_window_size_callback(window, self.window_resize_callback)
         self.last_mouse_pos = None
-
-    def window_resize_callback(self, window, width, height):
-        self.world_settings.update_window_size(width, height)
 
     def check_inputs(self):
         # Time delta
@@ -38,9 +32,10 @@ class InputHandler:
 
         cam = self.cam
         # Get current mouse state
-        x, y = glfw.get_cursor_pos(self.window)
-        left_pressed   = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT)   == glfw.PRESS
-        middle_pressed = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
+        mouse = imgui.get_io().mouse_pos
+        x, y = mouse.x, mouse.y
+        left_pressed = imgui.is_mouse_down(imgui.MouseButton_.left)
+        middle_pressed = imgui.is_mouse_down(imgui.MouseButton_.middle)
 
         dragging = left_pressed or middle_pressed
 
@@ -73,17 +68,17 @@ class InputHandler:
 
         # 6) Keyboard movement
         speed = cam.trans_sensitivity * dt
-        if glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS:
+        if imgui.is_key_down(imgui.Key.left_shift):
             speed *= 3.0
 
         # Camera translation is expressed in local coordinates and is
         # renderer-independent: +X right, +Y forward, +Z up.
         for key, (dx, dy, dz) in CAMERA_MOVE_DIRECTIONS.items():
-            if glfw.get_key(self.window, key) == glfw.PRESS:
+            if imgui.is_key_down(key):
                 cam.process_translation(dx * speed, dy * speed, dz * speed)
 
         # Camera roll
-        if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
+        if imgui.is_key_down(imgui.Key.q):
             cam.process_roll(-1)
-        if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
+        if imgui.is_key_down(imgui.Key.e):
             cam.process_roll(1)

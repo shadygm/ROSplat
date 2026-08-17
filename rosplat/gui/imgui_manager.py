@@ -2,12 +2,11 @@ import queue
 from datetime import datetime
 
 import numpy as np
-import OpenGL.GL as gl
 from PIL import Image
-from rosplat.config import RendererType
 
 # ImGui Bundle
 from imgui_bundle import (
+    hello_imgui,
     imgui,
     immapp,
     implot,
@@ -17,16 +16,6 @@ from imgui_bundle import (
 from rosplat.core import util
 from rosplat.ros import ROSNodeManager
 
-try:
-    from rosplat.render.renderer import CUDARenderer
-    import torch
-    HAS_TORCH = True
-except ImportError:
-    HAS_TORCH = False
-    util.logger.warning("CUDARenderer not available. CUDA rendering will be disabled.")
-    from rosplat.render.renderer import OpenGLRenderer
-    util.logger.info("Using OpenGL Renderer")
-
 
 # === Global State ===
 world_settings = None
@@ -34,12 +23,6 @@ frame_queue = queue.Queue(maxsize=10)
 latest_frame = [None]  # mutable container
 imu_queue = queue.Queue(maxsize=1)
 ros_node_manager = ROSNodeManager()
-
-type_visualization = [
-    "Gaussian Ball", "Flat Ball", "Billboard",
-    "Depth", "SH:0", "SH:0~1", "SH:0~2", "SH:0~3 (default)"
-]
-
 
 def shutdown_ros() -> None:
     """Stop ROS listeners and their executor before rclpy is shut down."""
@@ -51,14 +34,12 @@ gyro_x, gyro_y, gyro_z = [], [], []
 
 
 def take_screenshot(filename: str = "screenshot.png") -> None:
-    """
-    Capture the current OpenGL framebuffer and save it as an image.
-    """
-    x, y, width, height = gl.glGetIntegerv(gl.GL_VIEWPORT)
-    data = gl.glReadPixels(x, y, width, height, gl.GL_RGB, gl.GL_UNSIGNED_BYTE)
-    image = Image.frombytes("RGB", (width, height), data)
-    image = image.transpose(Image.FLIP_TOP_BOTTOM)
-    image.save(filename)
+    """Save the most recent Spirula render without reading a GL framebuffer."""
+    renderer = world_settings.gauss_renderer
+    if renderer is None:
+        util.logger.warning("Cannot take a screenshot before the renderer starts")
+        return
+    Image.fromarray(renderer.latest_rgba, mode="RGBA").save(filename)
     util.logger.info(f"[Screenshot saved] {filename}")
 
 
@@ -117,24 +98,11 @@ def load_file() -> None:
 
 
 def _renderer_settings() -> None:
-    imgui.text("Renderer:")
-    if HAS_TORCH and torch.cuda.is_available():
-        options = [RendererType.CUDA.value, RendererType.OPENGL.value]
-        current_idx = 0 if world_settings.get_renderer_type() == RendererType.CUDA else 1
-        changed, current_idx = imgui.combo("Renderer", current_idx, options)
-        if changed:
-            world_settings.switch_renderer(RendererType.CUDA if current_idx == 0 else RendererType.OPENGL)
-    if not isinstance(world_settings.gauss_renderer, CUDARenderer):
-        imgui.text("OpenGL Renderer: Sorting needed.")
-        if imgui.button("Sort and Update"):
-            world_settings.gauss_renderer.sort_and_update()
-        _, world_settings.auto_sort = imgui.checkbox("Auto-sort", world_settings.auto_sort)
-        changed, mode = imgui.combo("Visualization Type", world_settings.render_mode, type_visualization)
-        if changed:
-            world_settings.update_render_mode(mode)
-    else:
-        imgui.text("CUDA Renderer: No sorting needed.")
-        world_settings.auto_sort = False
+    imgui.text(f"Renderer: {world_settings.get_renderer_type().value}")
+    renderer = world_settings.gauss_renderer
+    if renderer is not None:
+        imgui.text(f"Device capacity: {renderer.capacity:,} splats")
+    imgui.text("Projection, tile sorting, and rasterization run in Spirula Vulkan.")
 
 
 def display_parameters_tab() -> None:
@@ -151,9 +119,6 @@ def display_parameters_tab() -> None:
     if imgui.button("Screenshot"):
         take_screenshot(f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
     imgui.text("Parameters:")
-    # TODO: Add more parameters for the CUDA renderer. 
-    # Currently, only the OpenGL has parameters.
-    # _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
     _renderer_settings()
 
 
@@ -225,62 +190,27 @@ def display_camera_tab() -> None:
     imgui.text("Camera settings go here.")
 
 
-def create_texture_from_frame(frame: np.ndarray) -> int:
-    """
-    Create an OpenGL texture from a NumPy image.
-    """
-    tex = gl.glGenTextures(1)
-    gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-
-    h, w, c = frame.shape
-    fmt = gl.GL_RGB if c == 3 else gl.GL_RGBA
-    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, fmt, w, h, 0, fmt, gl.GL_UNSIGNED_BYTE, frame)
-    return tex
-
-
-def update_texture(tex: int, frame: np.ndarray) -> None:
-    """
-    Update an OpenGL texture with a new frame.
-    """
-    gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-    h, w, c = frame.shape
-    fmt = gl.GL_RGB if c == 3 else gl.GL_RGBA
-    gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, w, h, fmt, gl.GL_UNSIGNED_BYTE, frame)
-    gl.glFlush()
-
-def refresh() -> None:
-    """
-    Refresh the current set of Gaussians.
-    """
-    world_settings.refresh_gaussians()
-
-
 @immapp.static(image_texture=None, last_frame=None)
 def display_frames_tab() -> None:
-    """
-    Display the most recent frame using OpenGL texture.
-    """
+    """Display the latest ROS image using the active ImGui backend texture."""
     static = display_frames_tab
 
     # Grab the latest image from shared memory
-    if latest_frame[0] is not None:
+    if latest_frame[0] is not None and latest_frame[0] is not static.last_frame:
         static.last_frame = latest_frame[0]
+        frame = np.asarray(static.last_frame)
+        if frame.shape[-1] == 3:
+            alpha = np.full((*frame.shape[:2], 1), 255, dtype=np.uint8)
+            frame = np.concatenate((frame, alpha), axis=-1)
+        static.image_texture = hello_imgui.create_texture_gpu_from_rgba_data(
+            np.ascontiguousarray(frame, dtype=np.uint8)
+        )
 
     frame = static.last_frame
 
     if frame is None:
         imgui.text("Waiting for frame...")
         return
-
-    h, w, _ = frame.shape
-    if static.image_texture is None:
-        static.image_texture = create_texture_from_frame(frame)
-    else:
-        update_texture(static.image_texture, frame)
 
     avail_w, avail_h = imgui.get_content_region_avail()
     if implot.begin_plot("Live Frame", size=(avail_w, avail_h)):
@@ -291,7 +221,7 @@ def display_frames_tab() -> None:
         )
         implot.plot_image(
             "Frame",
-            static.image_texture,
+            static.image_texture.texture_id(),
             (0, 0),
             (avail_w, avail_h)
         )
@@ -394,15 +324,7 @@ def main_ui(this_world_settings) -> None:
             tex = this_world_settings.gauss_renderer.draw()
             vec2 = imgui.ImVec2(avail_w, avail_h)
             imgui_tex = imgui.ImTextureRef(tex)
-            if this_world_settings.get_renderer_type() == RendererType.OPENGL:
-                imgui.image(
-                    imgui_tex,
-                    vec2,
-                    imgui.ImVec2(0.0, 1.0),
-                    imgui.ImVec2(1.0, 0.0),
-                )
-            else:
-                imgui.image(imgui_tex, vec2)
+            imgui.image(imgui_tex, vec2)
             if imgui.is_window_hovered():
                 this_world_settings.check_inputs()
         imgui.end()

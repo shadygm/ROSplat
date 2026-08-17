@@ -1,15 +1,11 @@
 numpy<2
-torch
 imgui-bundle
-cupy
 empy==3.3.4
-glfw
 imageio
 loguru
 pillow
 plyfile
 pyglm
-PyOpenGL
 PyYAML
 setuptools
 catkin_pkg

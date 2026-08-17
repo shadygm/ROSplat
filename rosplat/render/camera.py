@@ -166,10 +166,10 @@ class Camera:
         return np.array(glm.lookAt(pos, tgt, upv), dtype=np.float32)
 
     def get_view_matrix_opencv(self) -> np.ndarray:
-        """Return a world-to-camera matrix using OpenCV/gsplat axes.
+        """Return a world-to-camera matrix using Spirula's OpenCV axes.
 
-        ``glm.lookAt`` uses OpenGL camera coordinates, where the camera looks
-        down negative Z and positive Y points up.  gsplat expects positive Z
+        ``glm.lookAt`` uses graphics camera coordinates, where the camera looks
+        down negative Z and positive Y points up. Spirula expects positive Z
         in front of the camera and positive Y pointing down.
         """
         opengl_to_opencv = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)
@@ -192,7 +192,7 @@ class Camera:
 
     def get_intrinsics_matrix(self) -> np.ndarray:
         """3×3 pinhole intrinsics."""
-        f = self.w / (2 * math.tan(self.fovy/2))
+        f = self.h / (2 * math.tan(self.fovy/2))
         return np.array([
             [f, 0, self.w/2],
             [0, f, self.h/2],
