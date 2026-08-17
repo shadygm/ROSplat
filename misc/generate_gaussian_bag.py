@@ -1,222 +1,152 @@
-"""
-Script Name: generate_gaussian_bag.py
+#!/usr/bin/env python3
+"""Stream a Gaussian-splat PLY over a ROS 2 ``GaussianArray`` topic."""
 
-Description:
-    This script loads Gaussian data from a specified PLY file, initializes
-    a ROS2 node using rclpy, and continuously publishes a GaussianArray message 
-    that contains 1000 SingleGaussian messages every 0.1 seconds on the /gaussian_test topic.
-    After reaching the end of the Gaussian data, it cycles back to the beginning.
-
-Requirements:
-    - ROS2 (rclpy)
-    - numpy
-    - plyfile
-    - Custom message types:
-        gaussian_interface/SingleGaussian, with:
-            float32[3] xyz
-            float32[4] rotation
-            float32[3] scale
-            uint8 opacity
-            float32[] spherical_harmonics
-        gaussian_interface/GaussianArray, with:
-            gaussian_interface/SingleGaussian[] gaussians
-
-Usage:
-    1. Run it (optionally passing in a path to the PLY file):
-         python generate_gaussian_bag.py --ply_path /path/to/your_file.ply
-    2. In a separate terminal, record the published data or visualize it using ROSplat:
-         ros2 bag record /gaussian_test
-"""
-
-import sys
 import argparse
-import numpy as np
-from dataclasses import dataclass
-from plyfile import PlyData
+import sys
+import time
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import numpy as np
 import rclpy
+from gaussian_interface.msg import GaussianArray, SingleGaussian
+from rclpy.duration import Duration
 from rclpy.node import Node
 
-# ROS2 message imports
-from gaussian_interface.msg import SingleGaussian, GaussianArray
+from rosplat.core.gaussian_representation import GaussianData, from_ply
 
-@dataclass
-class GaussianData:
-    """
-    Holds arrays for Gaussian data: positions, rotations, scale, opacity, and SH coefficients.
-    """
-    xyz: np.ndarray      # shape: (N, 3)
-    rot: np.ndarray      # shape: (N, 4)
-    scale: np.ndarray    # shape: (N, 3)
-    opacity: np.ndarray  # shape: (N, 1)
-    sh: np.ndarray       # shape: (N, sh_dim)
 
-    def __len__(self) -> int:
-        """
-        Return the number of Gaussian entries (N).
-        """
-        return len(self.xyz)
+def make_gaussian_batch(
+    gaussian_data: GaussianData,
+    start: int,
+    end: int,
+    *,
+    refresh: bool,
+) -> GaussianArray:
+    """Serialize the half-open range ``[start, end)`` into one ROS message."""
+    message = GaussianArray()
+    message.refresh = refresh
+    message.gaussians = [SingleGaussian() for _ in range(end - start)]
 
-    @property
-    def sh_dim(self) -> int:
-        """
-        Return the dimensionality of the spherical harmonics (sh).
-        """
-        return self.sh.shape[-1]
+    for output_index, source_index in enumerate(range(start, end)):
+        gaussian = message.gaussians[output_index]
+        gaussian.xyz = gaussian_data.xyz[source_index].tolist()
+        gaussian.rotation = gaussian_data.rot[source_index].tolist()
+        gaussian.scale = gaussian_data.scale[source_index].tolist()
+        gaussian.opacity = int(
+            np.clip(gaussian_data.opacity[source_index, 0] * 255.0, 0, 255)
+        )
+        gaussian.spherical_harmonics = gaussian_data.sh[source_index].tolist()
 
-def from_ply(path: str) -> GaussianData:
-    """
-    Loads Gaussian data from a PLY file and returns a GaussianData object.
-    This function assumes the PLY file contains the properties:
-      - x, y, z for positions
-      - opacity
-      - f_dc_0, f_dc_1, f_dc_2 for DC components
-      - f_rest_X for other SH components
-      - scale_0, scale_1, scale_2 for scale
-      - rot_0, rot_1, rot_2, rot_3 for quaternion rotations
-    """
-    max_sh_degree = 3
-    plydata = PlyData.read(path)
+    return message
 
-    # Load positions.
-    xyz = np.stack((
-        np.asarray(plydata.elements[0]["x"]),
-        np.asarray(plydata.elements[0]["y"]),
-        np.asarray(plydata.elements[0]["z"])
-    ), axis=1).astype(np.float32)
-
-    # Load opacities and apply a sigmoid.
-    opacities = np.asarray(plydata.elements[0]["opacity"])[..., np.newaxis].astype(np.float32)
-    opacities = 1 / (1 + np.exp(-opacities))
-
-    # Load direct current (DC) features for spherical harmonics.
-    features_dc = np.zeros((xyz.shape[0], 3, 1), dtype=np.float32)
-    features_dc[:, 0, 0] = np.asarray(plydata.elements[0]["f_dc_0"])
-    features_dc[:, 1, 0] = np.asarray(plydata.elements[0]["f_dc_1"])
-    features_dc[:, 2, 0] = np.asarray(plydata.elements[0]["f_dc_2"])
-
-    # Load extra SH features.
-    extra_f_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("f_rest_")]
-    extra_f_names = sorted(extra_f_names, key=lambda x: int(x.split('_')[-1]))
-    assert len(extra_f_names) == 3 * (max_sh_degree + 1) ** 2 - 3, "Unexpected number of extra features"
-    features_extra = np.zeros((xyz.shape[0], len(extra_f_names)), dtype=np.float32)
-    for idx, attr_name in enumerate(extra_f_names):
-        features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
-    features_extra = features_extra.reshape((features_extra.shape[0], 3, (max_sh_degree + 1) ** 2 - 1))
-    features_extra = np.transpose(features_extra, [0, 2, 1])
-
-    # Load scales.
-    scale_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("scale_")]
-    scale_names = sorted(scale_names, key=lambda x: int(x.split('_')[-1]))
-    scales = np.zeros((xyz.shape[0], len(scale_names)), dtype=np.float32)
-    for idx, attr_name in enumerate(scale_names):
-        scales[:, idx] = np.asarray(plydata.elements[0][attr_name])
-    scales = np.exp(scales).astype(np.float32)
-
-    # Load rotations.
-    rot_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("rot")]
-    rot_names = sorted(rot_names, key=lambda x: int(x.split('_')[-1]))
-    rots = np.zeros((xyz.shape[0], len(rot_names)), dtype=np.float32)
-    for idx, attr_name in enumerate(rot_names):
-        rots[:, idx] = np.asarray(plydata.elements[0][attr_name])
-    # Normalize quaternion
-    rots = rots / np.linalg.norm(rots, axis=-1, keepdims=True)
-    rots = rots.astype(np.float32)
-
-    # Concatenate DC and extra features to form SH coefficients.
-    sh = np.concatenate([
-        features_dc.reshape(-1, 3),
-        features_extra.reshape(xyz.shape[0], -1)
-    ], axis=-1).astype(np.float32)
-
-    return GaussianData(xyz, rots, scales, opacities, sh)
 
 class GaussianPublisher(Node):
-    """
-    ROS2 Node that publishes a GaussianArray message containing 1000 SingleGaussian messages
-    every 0.1 seconds.
-    """
-    def __init__(self, gaussian_data: GaussianData):
-        super().__init__('gaussian_publisher')
+    """Publish one PLY scene in bounded batches, then stop."""
+
+    def __init__(
+        self,
+        gaussian_data: GaussianData,
+        *,
+        topic: str,
+        batch_size: int,
+        rate: float,
+        wait_for_subscriber: bool,
+    ) -> None:
+        super().__init__("gaussian_publisher")
         self.gaussian_data = gaussian_data
-        self.publisher_ = self.create_publisher(GaussianArray, '/gaussian_test', 10)
-        self.idx = 0
-        self.total = len(self.gaussian_data)
-        self.batch_size = 1000
+        self.publisher = self.create_publisher(GaussianArray, topic, 10)
+        self.topic = topic
+        self.batch_size = batch_size
+        self.wait_for_subscriber = wait_for_subscriber
+        self.next_index = 0
+        self.finished = False
+        self._waiting_logged = False
+        self.timer = self.create_timer(1.0 / rate, self.publish_next_batch)
+
+        sh_degree = int((gaussian_data.sh_dim // 3) ** 0.5 - 1)
         self.get_logger().info(
-            f"Loaded {self.total} gaussians. Publishing GaussianArray with {self.batch_size} gaussians at 30 Hz."
+            f"Loaded {len(gaussian_data):,} Gaussians at SH degree {sh_degree}; "
+            f"streaming batches of {batch_size:,} on {topic} at up to {rate:g} Hz."
         )
 
-        # Create a timer that calls publish_array every 1/30 seconds (30 Hz).
-        self.timer = self.create_timer(1 / 30.0, self.publish_array)
+    def publish_next_batch(self) -> None:
+        if self.wait_for_subscriber and self.publisher.get_subscription_count() == 0:
+            if not self._waiting_logged:
+                self.get_logger().info(f"Waiting for a subscriber on {self.topic}...")
+                self._waiting_logged = True
+            return
 
-    def publish_array(self):
-        """Publish a GaussianArray containing a batch of 1000 SingleGaussian messages."""
-        import time
-        start_time = time.time()
+        start = self.next_index
+        end = min(start + self.batch_size, len(self.gaussian_data))
+        started_at = time.perf_counter()
+        message = make_gaussian_batch(
+            self.gaussian_data,
+            start,
+            end,
+            refresh=start == 0,
+        )
+        self.publisher.publish(message)
+        self.next_index = end
 
-        array_msg = GaussianArray()
-        array_msg.gaussians = [SingleGaussian() for _ in range(self.batch_size)]
+        self.get_logger().info(
+            f"Published {start:,}:{end:,} ({end / len(self.gaussian_data):.1%}) "
+            f"in {time.perf_counter() - started_at:.3f}s."
+        )
 
-        for i in range(self.batch_size):
-            curr_idx = (self.idx + i) % self.total
-            single_msg = array_msg.gaussians[i]
+        if end == len(self.gaussian_data):
+            self.finished = True
+            self.timer.cancel()
+            self.get_logger().info("Finished streaming the PLY scene.")
 
-            # Set data using the new array-based message structure.
-            single_msg.xyz = self.gaussian_data.xyz[curr_idx].tolist()
-            single_msg.rotation = self.gaussian_data.rot[curr_idx].tolist()
-            single_msg.scale = self.gaussian_data.scale[curr_idx].tolist()
-            single_msg.opacity = int(np.clip(self.gaussian_data.opacity[curr_idx, 0] * 255, 0, 255))
-            single_msg.spherical_harmonics = self.gaussian_data.sh[curr_idx].tolist()
-            # print length of the sh array
-            #print the scale 
-            print(f"Scale: {single_msg.scale}")
-            print(f"SH length: {len(single_msg.spherical_harmonics)}")
-        # Advance the index by batch_size.
-        self.idx = (self.idx + self.batch_size) % self.total
 
-        serialization_time = time.time() - start_time
-        self.get_logger().info(f"Serialization took {serialization_time:.6f} seconds.")
-
-        self.publisher_.publish(array_msg)
-
-    def convert_gaussian(self, gaussian: SingleGaussian) -> GaussianData:
-        """
-        Convert a SingleGaussian message (with array-based fields) to a GaussianData instance.
-        """
-        xyz = np.array([gaussian.xyz], dtype=np.float32)
-        rot = np.array([gaussian.rotation], dtype=np.float32)
-        scale = np.array([gaussian.scale], dtype=np.float32)
-        opacity = np.array([[gaussian.opacity / 255.0]], dtype=np.float32)
-        # print the spherical harmonics type values
-        print(f"Spherical harmonics type: {type(gaussian.spherical_harmonics)}")
-        return GaussianData(xyz, rot, scale, opacity, sh)
-
-def main(args=None):
-    parser = argparse.ArgumentParser(
-        description='ROS2 Node to publish a GaussianArray message containing 1000 gaussians every 0.1 seconds.'
+def main(args=None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ply-path", "--ply_path", required=True, dest="ply_path")
+    parser.add_argument("--topic", default="/gaussian_test")
+    parser.add_argument("--batch-size", type=int, default=1_000)
+    parser.add_argument("--rate", type=float, default=30.0)
+    parser.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Publish immediately instead of waiting for a subscriber.",
     )
-    parser.add_argument('--ply_path', default='gaussians.ply',
-                        help='Path to the PLY file containing the Gaussian data.')
-    cli_args = parser.parse_args()
+    cli_args, ros_args = parser.parse_known_args(args)
 
-    rclpy.init(args=args)
+    if cli_args.batch_size <= 0:
+        parser.error("--batch-size must be positive")
+    if cli_args.rate <= 0:
+        parser.error("--rate must be positive")
+
+    gaussian_data = from_ply(cli_args.ply_path)
+    rclpy.init(args=ros_args)
+    node = GaussianPublisher(
+        gaussian_data,
+        topic=cli_args.topic,
+        batch_size=cli_args.batch_size,
+        rate=cli_args.rate,
+        wait_for_subscriber=not cli_args.no_wait,
+    )
 
     try:
-        g_data = from_ply(cli_args.ply_path)
-    except Exception as e:
-        print(f"Failed to load PLY file: {e}")
-        sys.exit(1)
-
-    node = GaussianPublisher(g_data)
-
-    try:
-        rclpy.spin(node)
+        while rclpy.ok() and not node.finished:
+            rclpy.spin_once(node, timeout_sec=0.1)
+        if node.finished:
+            acknowledged = node.publisher.wait_for_all_acked(Duration(seconds=30.0))
+            if acknowledged:
+                node.get_logger().info("All published batches were acknowledged.")
+            else:
+                node.get_logger().warning(
+                    "Timed out waiting for all published batches to be acknowledged."
+                )
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
