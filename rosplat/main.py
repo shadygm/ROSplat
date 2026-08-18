@@ -6,11 +6,11 @@ from imgui_bundle import imgui
 import rclpy
 import wgpu
 from rendercanvas.auto import RenderCanvas, loop
-from wgpu.utils.imgui import ImguiRenderer
 
 from rosplat.config import WorldSettings
 from rosplat.gui import main_ui, shutdown_ros
 from rosplat.gui.vulkan_texture import VulkanTextureRegistry
+from rosplat.gui.wgpu_backend import CANVAS_OPTIONS, RosplatImguiRenderer
 from rosplat.input import InputHandler
 
 
@@ -59,12 +59,7 @@ class App:
             rclpy.shutdown()
 
     def run(self) -> None:
-        self.canvas = RenderCanvas(
-            title="ROSplat",
-            size=(1280, 720),
-            max_fps=60,
-            update_mode="continuous",
-        )
+        self.canvas = RenderCanvas(**CANVAS_OPTIONS)
         adapter = wgpu.gpu.request_adapter_sync(power_preference="high-performance")
         if adapter is None:
             raise RuntimeError("No WebGPU adapter was available")
@@ -74,7 +69,7 @@ class App:
                 f"{adapter.info['backend_type']}"
             )
         device = adapter.request_device_sync()
-        self.imgui_renderer = ImguiRenderer(device, self.canvas)
+        self.imgui_renderer = RosplatImguiRenderer(device, self.canvas)
         self.texture_registry = VulkanTextureRegistry(
             device, self.imgui_renderer.backend
         )
