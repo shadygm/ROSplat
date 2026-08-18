@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+from enum import IntEnum
 import math
 import os
 from pathlib import Path
@@ -15,6 +16,14 @@ from rosplat.render.renderer.base_gaussian_renderer import GaussianRenderBase
 
 class SpirulaError(RuntimeError):
     """Raised when the native Spirula Vulkan bridge reports an error."""
+
+
+class RenderOutputMode(IntEnum):
+    """Visual buffers exposed by the native Spirula renderer."""
+
+    COLOR = 0
+    DEPTH = 1
+    OPACITY = 2
 
 
 class _DeviceInfo(ctypes.Structure):
@@ -96,6 +105,8 @@ class _Bridge:
             ctypes.c_void_p,
         ]
         lib.rosplat_spirula_set_camera.restype = ctypes.c_int
+        lib.rosplat_spirula_set_render_options.argtypes = [ctypes.c_int, ctypes.c_int]
+        lib.rosplat_spirula_set_render_options.restype = ctypes.c_int
         lib.rosplat_spirula_render_rgba8.argtypes = [
             ctypes.c_void_p,
             ctypes.c_size_t,
@@ -137,6 +148,8 @@ class SpirulaRenderer(GaussianRenderBase):
         self._model_matrix = np.eye(4, dtype=np.float32)
         self._scale_modifier = 1.0
         self._sh_degree = 0
+        self._active_sh_degree: Optional[int] = None
+        self._output_mode = RenderOutputMode.COLOR
         self._scene_ready = False
         self._camera_dirty = True
         self._render_dirty = True
@@ -152,10 +165,12 @@ class SpirulaRenderer(GaussianRenderBase):
         if not info.usable:
             raise SpirulaError(f"Vulkan device is not usable: {info.name.decode()}")
         self._bridge.require(self._bridge.lib.rosplat_spirula_select_device(0))
+        self._device_name = info.name.decode("utf-8", errors="replace")
+        self._device_vram_bytes = int(info.vram_bytes)
         util.logger.info(
             "Spirula Vulkan renderer initialized on {} ({:.1f} GiB)",
-            info.name.decode("utf-8", errors="replace"),
-            info.vram_bytes / (1024**3),
+            self._device_name,
+            self._device_vram_bytes / (1024**3),
         )
 
     @staticmethod
@@ -262,10 +277,31 @@ class SpirulaRenderer(GaussianRenderBase):
             raise ValueError("scale modifier must be positive")
         self._scale_modifier = modifier
 
-    def set_render_mode(self, mod: int) -> None:
-        # Spirula's initial ROSplat integration renders RGB. Debug modes will be
-        # mapped to its depth/alpha buffers after the renderer replacement lands.
-        del mod
+    def _apply_render_options(self) -> None:
+        degree = -1 if self._active_sh_degree is None else self._active_sh_degree
+        self._bridge.require(
+            self._bridge.lib.rosplat_spirula_set_render_options(
+                int(self._output_mode), degree
+            )
+        )
+        self._render_dirty = True
+
+    def set_render_output(self, mode: RenderOutputMode) -> None:
+        mode = RenderOutputMode(mode)
+        if mode == self._output_mode:
+            return
+        self._output_mode = mode
+        self._apply_render_options()
+
+    def set_sh_degree(self, degree: Optional[int]) -> None:
+        if degree is not None:
+            degree = int(degree)
+            if not 0 <= degree <= 4:
+                raise ValueError("active SH degree must be between 0 and 4")
+        if degree == self._active_sh_degree:
+            return
+        self._active_sh_degree = degree
+        self._apply_render_options()
 
     def sort_and_update(self) -> None:
         # Spirula performs tile-key generation and radix sorting every render.
@@ -334,6 +370,28 @@ class SpirulaRenderer(GaussianRenderBase):
     @property
     def capacity(self) -> int:
         return int(self._bridge.lib.rosplat_spirula_capacity())
+
+    @property
+    def scene_sh_degree(self) -> int:
+        return self._sh_degree
+
+    @property
+    def active_sh_degree(self) -> int:
+        if self._active_sh_degree is None:
+            return self._sh_degree
+        return min(self._active_sh_degree, self._sh_degree)
+
+    @property
+    def output_mode(self) -> RenderOutputMode:
+        return self._output_mode
+
+    @property
+    def device_name(self) -> str:
+        return self._device_name
+
+    @property
+    def device_vram_bytes(self) -> int:
+        return self._device_vram_bytes
 
     @property
     def latest_rgba(self) -> np.ndarray:

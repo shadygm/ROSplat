@@ -19,6 +19,12 @@ typedef struct RosplatSpirulaDeviceInfo {
     int usable;
 } RosplatSpirulaDeviceInfo;
 
+typedef enum RosplatSpirulaOutputMode {
+    ROSPLAT_SPIRULA_OUTPUT_COLOR = 0,
+    ROSPLAT_SPIRULA_OUTPUT_DEPTH = 1,
+    ROSPLAT_SPIRULA_OUTPUT_OPACITY = 2,
+} RosplatSpirulaOutputMode;
+
 ROSPLAT_API const char* rosplat_spirula_last_error(void);
 ROSPLAT_API int rosplat_spirula_device_count(void);
 ROSPLAT_API int rosplat_spirula_device_info(
@@ -54,6 +60,12 @@ ROSPLAT_API int rosplat_spirula_set_camera(
     int height,
     const float* view_matrix_4x4,
     const float* intrinsics_fx_fy_cx_cy
+);
+
+/* `sh_degree` is -1 for the scene maximum, or an explicit degree 0..4. */
+ROSPLAT_API int rosplat_spirula_set_render_options(
+    int output_mode,
+    int sh_degree
 );
 
 /* Render top-to-bottom RGBA8 into caller-owned storage. */

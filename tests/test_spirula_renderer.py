@@ -1,11 +1,12 @@
 import ctypes
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import numpy as np
 
 from rosplat.core.gaussian_representation import GaussianData
 from rosplat.render.camera import Camera
+from rosplat.render.renderer import RenderOutputMode
 from rosplat.render.renderer.SpirulaRenderer import SpirulaRenderer, _DeviceInfo
 
 
@@ -20,6 +21,7 @@ class FakeBridge:
             rosplat_spirula_reset_scene=Mock(return_value=1),
             rosplat_spirula_append=Mock(side_effect=self._append),
             rosplat_spirula_set_camera=Mock(side_effect=self._set_camera),
+            rosplat_spirula_set_render_options=Mock(return_value=1),
             rosplat_spirula_render_rgba8=Mock(side_effect=self._render),
             rosplat_spirula_splat_count=Mock(return_value=2),
             rosplat_spirula_capacity=Mock(return_value=4096),
@@ -171,3 +173,29 @@ def test_headless_render_does_not_require_a_texture_registry():
     assert first is second
     assert first.shape == (4, 8, 4)
     bridge.lib.rosplat_spirula_render_rgba8.assert_called_once()
+
+
+def test_render_options_update_native_state_and_invalidate_render():
+    renderer, bridge = make_renderer(8, 4)
+    renderer._render_dirty = False
+
+    renderer.set_render_output(RenderOutputMode.DEPTH)
+    renderer.set_sh_degree(1)
+
+    assert bridge.lib.rosplat_spirula_set_render_options.call_args_list == [
+        call(RenderOutputMode.DEPTH, -1),
+        call(RenderOutputMode.DEPTH, 1),
+    ]
+    assert renderer.output_mode is RenderOutputMode.DEPTH
+    assert renderer.active_sh_degree == 0
+    assert renderer._render_dirty
+
+
+def test_scene_sh_degree_limits_active_degree():
+    renderer, _ = make_renderer()
+    renderer.append_gaussians(gaussian_batch(), refresh=True)
+
+    renderer.set_sh_degree(4)
+
+    assert renderer.scene_sh_degree == 1
+    assert renderer.active_sh_degree == 1

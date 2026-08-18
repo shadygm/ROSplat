@@ -83,22 +83,37 @@ struct DeviceScene {
 
 struct HostRender {
     float3* rgb = nullptr;
-    size_t pixels = 0;
+    float* scalar = nullptr;
+    size_t rgb_pixels = 0;
+    size_t scalar_pixels = 0;
 
-    void resize(size_t requested_pixels) {
-        if (requested_pixels <= pixels) return;
+    void resize_rgb(size_t requested_pixels) {
+        if (requested_pixels <= rgb_pixels) return;
         backend::host_free_pinned(rgb);
         rgb = static_cast<float3*>(
             backend::host_malloc_pinned(requested_pixels * sizeof(float3)));
         if (!rgb)
-            throw std::runtime_error("failed to allocate pinned render readback buffers");
-        pixels = requested_pixels;
+            throw std::runtime_error("failed to allocate pinned RGB readback buffer");
+        rgb_pixels = requested_pixels;
+    }
+
+    void resize_scalar(size_t requested_pixels) {
+        if (requested_pixels <= scalar_pixels) return;
+        backend::host_free_pinned(scalar);
+        scalar = static_cast<float*>(
+            backend::host_malloc_pinned(requested_pixels * sizeof(float)));
+        if (!scalar)
+            throw std::runtime_error("failed to allocate pinned scalar readback buffer");
+        scalar_pixels = requested_pixels;
     }
 
     void release() {
         backend::host_free_pinned(rgb);
+        backend::host_free_pinned(scalar);
         rgb = nullptr;
-        pixels = 0;
+        scalar = nullptr;
+        rgb_pixels = 0;
+        scalar_pixels = 0;
     }
 };
 
@@ -110,6 +125,8 @@ public:
     int width = 0;
     int height = 0;
     bool camera_ready = false;
+    RosplatSpirulaOutputMode output_mode = ROSPLAT_SPIRULA_OUTPUT_COLOR;
+    int requested_sh_degree = -1;
 
     void reset(int sh_degree, int64_t initial_capacity) {
         if (sh_degree < 0 || sh_degree > 4)
@@ -251,6 +268,19 @@ public:
         camera_ready = true;
     }
 
+    void set_render_options(int requested_output_mode,
+                            int requested_degree) {
+        if (requested_output_mode < ROSPLAT_SPIRULA_OUTPUT_COLOR ||
+            requested_output_mode > ROSPLAT_SPIRULA_OUTPUT_OPACITY) {
+            throw std::invalid_argument("render output mode must be color, depth, or opacity");
+        }
+        if (requested_degree < -1 || requested_degree > 4) {
+            throw std::invalid_argument("active SH degree must be -1 or in [0, 4]");
+        }
+        output_mode = static_cast<RosplatSpirulaOutputMode>(requested_output_mode);
+        requested_sh_degree = requested_degree;
+    }
+
     void render(uint8_t* output, size_t output_bytes) {
         if (!output) throw std::invalid_argument("render output cannot be null");
         if (!camera_ready) throw std::runtime_error("camera has not been configured");
@@ -267,24 +297,47 @@ public:
             return;
         }
 
-        forward_3dgs("3dgs", scene.sh_degree, true);
+        const int render_sh_degree = requested_sh_degree < 0
+            ? scene.sh_degree
+            : std::min(requested_sh_degree, scene.sh_degree);
+        forward_3dgs("3dgs", render_sh_degree, true);
         auto& state = engine();
-        auto& rgb = std::get<0>(state.fwd.renders);
-        if (!rgb.data_ptr())
-            throw std::runtime_error("Spirula produced no render buffers");
+        if (output_mode == ROSPLAT_SPIRULA_OUTPUT_COLOR) {
+            auto& rgb = std::get<0>(state.fwd.renders);
+            if (!rgb.data_ptr())
+                throw std::runtime_error("Spirula produced no RGB render buffer");
+            host.resize_rgb(pixel_count);
+            backend::memcpy_sync(host.rgb, rgb.data_ptr(),
+                                 pixel_count * sizeof(float3),
+                                 backend::MemcpyKind::DeviceToHost);
+            for (size_t index = 0; index < pixel_count; ++index) {
+                const float3 color = host.rgb[index];
+                write_gray_or_rgb(output, index, color.x, color.y, color.z);
+            }
+            return;
+        }
 
-        host.resize(pixel_count);
-        backend::memcpy_sync(host.rgb, rgb.data_ptr(), pixel_count * sizeof(float3),
+        host.resize_scalar(pixel_count);
+        if (output_mode == ROSPLAT_SPIRULA_OUTPUT_DEPTH) {
+            auto& depth = std::get<1>(state.fwd.renders);
+            if (!depth.data_ptr())
+                throw std::runtime_error("Spirula produced no depth render buffer");
+            backend::memcpy_sync(host.scalar, depth.data_ptr(),
+                                 pixel_count * sizeof(float),
+                                 backend::MemcpyKind::DeviceToHost);
+            write_depth(output, pixel_count);
+            return;
+        }
+
+        auto& transmittance = state.fwd.render_Ts;
+        if (!transmittance.data_ptr())
+            throw std::runtime_error("Spirula produced no transmittance render buffer");
+        backend::memcpy_sync(host.scalar, transmittance.data_ptr(),
+                             pixel_count * sizeof(float),
                              backend::MemcpyKind::DeviceToHost);
-
         for (size_t index = 0; index < pixel_count; ++index) {
-            const float3 color = host.rgb[index];
-            output[index * 4 + 0] = to_u8(color.x);
-            output[index * 4 + 1] = to_u8(color.y);
-            output[index * 4 + 2] = to_u8(color.z);
-            // The render is already composited over black. Keeping the ImGui
-            // texture opaque avoids multiplying edge colors by alpha twice.
-            output[index * 4 + 3] = 255;
+            const float opacity = 1.0f - host.scalar[index];
+            write_gray_or_rgb(output, index, opacity, opacity, opacity);
         }
     }
 
@@ -295,9 +348,46 @@ public:
         width = 0;
         height = 0;
         camera_ready = false;
+        output_mode = ROSPLAT_SPIRULA_OUTPUT_COLOR;
+        requested_sh_degree = -1;
     }
 
 private:
+    static void write_gray_or_rgb(uint8_t* output, size_t index,
+                                  float red, float green, float blue) {
+        output[index * 4 + 0] = to_u8(red);
+        output[index * 4 + 1] = to_u8(green);
+        output[index * 4 + 2] = to_u8(blue);
+        // Keep the ImGui texture opaque; the RGB channels already contain
+        // the composited color or the complete scalar visualization.
+        output[index * 4 + 3] = 255;
+    }
+
+    void write_depth(uint8_t* output, size_t pixel_count) const {
+        float min_depth = std::numeric_limits<float>::infinity();
+        float max_depth = -std::numeric_limits<float>::infinity();
+        for (size_t index = 0; index < pixel_count; ++index) {
+            const float depth = host.scalar[index];
+            if (std::isfinite(depth) && depth > 0.0f) {
+                min_depth = std::min(min_depth, depth);
+                max_depth = std::max(max_depth, depth);
+            }
+        }
+
+        const bool have_depth = std::isfinite(min_depth);
+        const float range = max_depth - min_depth;
+        for (size_t index = 0; index < pixel_count; ++index) {
+            const float depth = host.scalar[index];
+            float intensity = 0.0f;
+            if (have_depth && std::isfinite(depth) && depth > 0.0f) {
+                intensity = range > 1e-6f
+                    ? 1.0f - (depth - min_depth) / range
+                    : 1.0f;
+            }
+            write_gray_or_rgb(output, index, intensity, intensity, intensity);
+        }
+    }
+
     static uint8_t to_u8(float value) {
         value = std::clamp(value, 0.0f, 1.0f);
         return static_cast<uint8_t>(std::lround(value * 255.0f));
@@ -376,6 +466,12 @@ int rosplat_spirula_set_camera(int width,
         instance.set_camera(width, height, view_matrix_4x4,
                             intrinsics_fx_fy_cx_cy);
     });
+}
+
+int rosplat_spirula_set_render_options(int output_mode, int sh_degree) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return guard([&] { instance.set_render_options(output_mode, sh_degree); });
 }
 
 int rosplat_spirula_render_rgba8(uint8_t* output_rgba, size_t output_bytes) {

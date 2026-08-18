@@ -4,6 +4,7 @@ from unittest.mock import Mock
 from gaussian_interface.msg import GaussianArray, SingleGaussian
 
 from rosplat.config.world_settings import WorldSettings
+from rosplat.render.renderer import RenderOutputMode
 
 
 def gaussian_message(x=0.0) -> SingleGaussian:
@@ -85,6 +86,20 @@ class WorldSettingsTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "mix SH layouts"):
             settings.append_gaussians(message)
+
+    def test_renderer_options_are_forwarded_without_reloading_the_scene(self):
+        settings = WorldSettings()
+        settings.gauss_renderer = fake_renderer()
+
+        settings.update_render_output(RenderOutputMode.OPACITY)
+        settings.update_sh_degree(0)
+
+        self.assertEqual(settings.render_output, RenderOutputMode.OPACITY)
+        self.assertEqual(settings.active_sh_degree, 0)
+        settings.gauss_renderer.set_render_output.assert_called_once_with(
+            RenderOutputMode.OPACITY
+        )
+        settings.gauss_renderer.set_sh_degree.assert_called_once_with(0)
 
 
 if __name__ == "__main__":

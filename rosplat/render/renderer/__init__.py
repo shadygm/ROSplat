@@ -1,4 +1,9 @@
 from .base_gaussian_renderer import GaussianRenderBase
-from .SpirulaRenderer import SpirulaRenderer, SpirulaError
+from .SpirulaRenderer import RenderOutputMode, SpirulaError, SpirulaRenderer
 
-__all__ = ['GaussianRenderBase', 'SpirulaRenderer', 'SpirulaError']
+__all__ = [
+    "GaussianRenderBase",
+    "RenderOutputMode",
+    "SpirulaRenderer",
+    "SpirulaError",
+]

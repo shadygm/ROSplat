@@ -11,7 +11,7 @@ from gaussian_interface.msg import GaussianArray, SingleGaussian
 from rosplat.core import gaussian_representation, util
 from rosplat.core.gaussian_representation import GaussianData
 from rosplat.render.camera import Camera
-from rosplat.render.renderer import SpirulaRenderer
+from rosplat.render.renderer import RenderOutputMode, SpirulaRenderer
 
 
 MAX_GAUSSIANS = 50_000_000
@@ -45,7 +45,8 @@ class WorldSettings:
         self.time_scale = 5.0
         self.model_transform_speed = 100.0
         self.scale_modifier = 1.0
-        self.render_mode = 7
+        self.render_output = RenderOutputMode.COLOR
+        self.active_sh_degree: Optional[int] = None
         self.inverse_movements = False
         self.overwrite_gaussians = False
         self.model_transform = np.eye(4, dtype=np.float32)
@@ -85,10 +86,15 @@ class WorldSettings:
         if self.input_handler:
             self.input_handler.check_inputs()
 
-    def update_render_mode(self, mode: int) -> None:
-        self.render_mode = mode
+    def update_render_output(self, mode: RenderOutputMode) -> None:
+        self.render_output = RenderOutputMode(mode)
         if self.gauss_renderer:
-            self.gauss_renderer.set_render_mode(mode - 4)
+            self.gauss_renderer.set_render_output(self.render_output)
+
+    def update_sh_degree(self, degree: Optional[int]) -> None:
+        self.active_sh_degree = degree
+        if self.gauss_renderer:
+            self.gauss_renderer.set_sh_degree(degree)
 
     def get_camera_pose(self):
         return self.world_camera.get_pose()
@@ -241,7 +247,8 @@ class WorldSettings:
                 )
 
         self.gauss_renderer.set_scale_modifier(self.scale_modifier)
-        self.gauss_renderer.set_render_mode(self.render_mode - 4)
+        self.gauss_renderer.set_render_output(self.render_output)
+        self.gauss_renderer.set_sh_degree(self.active_sh_degree)
         self.gauss_renderer.set_model_matrix(self.model_transform)
         self.gauss_renderer.update_camera_pose()
         self.gauss_renderer.update_camera_intrin()
