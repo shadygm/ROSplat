@@ -68,6 +68,9 @@ ROSPLAT_API int rosplat_spirula_set_render_options(
     int sh_degree
 );
 
+/* Apply a positive global multiplier to every Gaussian's scale. */
+ROSPLAT_API int rosplat_spirula_set_scale_modifier(float modifier);
+
 /* Render top-to-bottom RGBA8 into caller-owned storage. */
 ROSPLAT_API int rosplat_spirula_render_rgba8(
     uint8_t* output_rgba,

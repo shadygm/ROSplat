@@ -93,6 +93,7 @@ class WorldSettingsTest(unittest.TestCase):
 
         settings.update_render_output(RenderOutputMode.OPACITY)
         settings.update_sh_degree(0)
+        settings.update_scale_modifier(1.25)
 
         self.assertEqual(settings.render_output, RenderOutputMode.OPACITY)
         self.assertEqual(settings.active_sh_degree, 0)
@@ -100,6 +101,7 @@ class WorldSettingsTest(unittest.TestCase):
             RenderOutputMode.OPACITY
         )
         settings.gauss_renderer.set_sh_degree.assert_called_once_with(0)
+        settings.gauss_renderer.set_scale_modifier.assert_called_once_with(1.25)
 
 
 if __name__ == "__main__":

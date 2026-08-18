@@ -96,6 +96,11 @@ class WorldSettings:
         if self.gauss_renderer:
             self.gauss_renderer.set_sh_degree(degree)
 
+    def update_scale_modifier(self, modifier: float) -> None:
+        self.scale_modifier = float(modifier)
+        if self.gauss_renderer:
+            self.gauss_renderer.set_scale_modifier(self.scale_modifier)
+
     def get_camera_pose(self):
         return self.world_camera.get_pose()
 

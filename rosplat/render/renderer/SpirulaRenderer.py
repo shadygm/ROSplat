@@ -107,6 +107,8 @@ class _Bridge:
         lib.rosplat_spirula_set_camera.restype = ctypes.c_int
         lib.rosplat_spirula_set_render_options.argtypes = [ctypes.c_int, ctypes.c_int]
         lib.rosplat_spirula_set_render_options.restype = ctypes.c_int
+        lib.rosplat_spirula_set_scale_modifier.argtypes = [ctypes.c_float]
+        lib.rosplat_spirula_set_scale_modifier.restype = ctypes.c_int
         lib.rosplat_spirula_render_rgba8.argtypes = [
             ctypes.c_void_p,
             ctypes.c_size_t,
@@ -275,7 +277,13 @@ class SpirulaRenderer(GaussianRenderBase):
         modifier = float(modifier)
         if modifier <= 0:
             raise ValueError("scale modifier must be positive")
+        if modifier == self._scale_modifier:
+            return
+        self._bridge.require(
+            self._bridge.lib.rosplat_spirula_set_scale_modifier(modifier)
+        )
         self._scale_modifier = modifier
+        self._render_dirty = True
 
     def _apply_render_options(self) -> None:
         degree = -1 if self._active_sh_degree is None else self._active_sh_degree

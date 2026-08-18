@@ -22,6 +22,7 @@ class FakeBridge:
             rosplat_spirula_append=Mock(side_effect=self._append),
             rosplat_spirula_set_camera=Mock(side_effect=self._set_camera),
             rosplat_spirula_set_render_options=Mock(return_value=1),
+            rosplat_spirula_set_scale_modifier=Mock(return_value=1),
             rosplat_spirula_render_rgba8=Mock(side_effect=self._render),
             rosplat_spirula_splat_count=Mock(return_value=2),
             rosplat_spirula_capacity=Mock(return_value=4096),
@@ -199,3 +200,14 @@ def test_scene_sh_degree_limits_active_degree():
 
     assert renderer.scene_sh_degree == 1
     assert renderer.active_sh_degree == 1
+
+
+def test_scale_modifier_updates_native_scene_and_invalidates_render():
+    renderer, bridge = make_renderer()
+    renderer._render_dirty = False
+
+    renderer.set_scale_modifier(1.5)
+
+    bridge.lib.rosplat_spirula_set_scale_modifier.assert_called_once_with(1.5)
+    assert renderer._scale_modifier == 1.5
+    assert renderer._render_dirty

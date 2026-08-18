@@ -5,6 +5,7 @@
 #include "core/Tensor.h"
 #include "engine/Engine.h"
 #include "engine/EngineState.h"
+#include "kernels/optim/Optimizer.cuh"
 
 #include <algorithm>
 #include <cmath>
@@ -127,6 +128,7 @@ public:
     bool camera_ready = false;
     RosplatSpirulaOutputMode output_mode = ROSPLAT_SPIRULA_OUTPUT_COLOR;
     int requested_sh_degree = -1;
+    float scale_modifier = 1.0f;
 
     void reset(int sh_degree, int64_t initial_capacity) {
         if (sh_degree < 0 || sh_degree > 4)
@@ -281,6 +283,43 @@ public:
         requested_sh_degree = requested_degree;
     }
 
+    void set_scale_modifier(float requested_modifier) {
+        if (!std::isfinite(requested_modifier) || requested_modifier <= 0.0f)
+            throw std::invalid_argument("scale modifier must be positive and finite");
+        if (requested_modifier == scale_modifier)
+            return;
+
+        const float log_delta = std::log(requested_modifier / scale_modifier);
+        const int64_t numel = scene.count * 3;
+        if (numel > 0) {
+            constexpr int64_t max_chunk = 1 << 20;
+            const int64_t chunk = std::min(numel, max_chunk);
+            std::vector<float> host_delta(static_cast<size_t>(chunk), log_delta);
+            float* device_delta = static_cast<float*>(backend::device_malloc_checked(
+                static_cast<size_t>(chunk) * sizeof(float),
+                "ROSplat scale modifier scratch"));
+            try {
+                backend::memcpy_sync(
+                    device_delta, host_delta.data(),
+                    static_cast<size_t>(chunk) * sizeof(float),
+                    backend::MemcpyKind::HostToDevice);
+                float* scales = reinterpret_cast<float*>(scene.scales);
+                for (int64_t offset = 0; offset < numel; offset += chunk) {
+                    const int64_t count = std::min(chunk, numel - offset);
+                    float_add_into(
+                        DeviceVector<float>(view_1d(scales + offset, count, 1)),
+                        DeviceVector<float>(view_1d(device_delta, count, 1)),
+                        count);
+                }
+            } catch (...) {
+                backend::device_free(device_delta);
+                throw;
+            }
+            backend::device_free(device_delta);
+        }
+        scale_modifier = requested_modifier;
+    }
+
     void render(uint8_t* output, size_t output_bytes) {
         if (!output) throw std::invalid_argument("render output cannot be null");
         if (!camera_ready) throw std::runtime_error("camera has not been configured");
@@ -350,6 +389,7 @@ public:
         camera_ready = false;
         output_mode = ROSPLAT_SPIRULA_OUTPUT_COLOR;
         requested_sh_degree = -1;
+        scale_modifier = 1.0f;
     }
 
 private:
@@ -472,6 +512,12 @@ int rosplat_spirula_set_render_options(int output_mode, int sh_degree) {
     Renderer& instance = renderer();
     std::lock_guard<std::mutex> lock(instance.mutex);
     return guard([&] { instance.set_render_options(output_mode, sh_degree); });
+}
+
+int rosplat_spirula_set_scale_modifier(float modifier) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return guard([&] { instance.set_scale_modifier(modifier); });
 }
 
 int rosplat_spirula_render_rgba8(uint8_t* output_rgba, size_t output_bytes) {

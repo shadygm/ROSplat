@@ -69,6 +69,16 @@ int main() {
         std::cerr << "SH degree selection did not change the color render\n";
         return 1;
     }
+    const std::vector<uint8_t> normal_scale_output = output;
+    if (!rosplat_spirula_set_scale_modifier(2.0f) ||
+        !rosplat_spirula_render_rgba8(output.data(), output.size())) {
+        std::cerr << rosplat_spirula_last_error() << '\n';
+        return 1;
+    }
+    if (std::equal(output.begin(), output.end(), normal_scale_output.begin())) {
+        std::cerr << "scale modifier did not change the color render\n";
+        return 1;
+    }
 
     if (!rosplat_spirula_set_render_options(
             ROSPLAT_SPIRULA_OUTPUT_DEPTH, -1) ||
