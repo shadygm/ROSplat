@@ -54,23 +54,22 @@ The Compose service requests every available GPU through the toolkit's CDI devic
 
 Then build and run ROSplat:
 
-    cd docker
-    ./run_docker.sh -b    # Build rosplat:lyrical-vulkan
-    ./run_docker.sh -r    # Start the container and launch ROSplat
+    ./docker/run_docker.sh -b    # Build rosplat:lyrical-vulkan once
+    ./docker/launch_ui.sh        # Start/reuse the container and launch ROSplat
 
 For an interactive development shell or cleanup:
 
-    ./run_docker.sh -u
-    ./run_docker.sh -c
+    ./docker/run_docker.sh -u
+    ./docker/run_docker.sh -c
 
 After starting the container, verify ROS imports and a real Spirula Vulkan render with:
 
-    docker compose exec rosplat rosplat-entrypoint python3 -m docker.smoke_test
+    docker compose -f docker/docker-compose.yml exec rosplat rosplat-entrypoint python3 -m docker.smoke_test
 
 Verify the complete Dear ImGui window, Vulkan swapchain, and splat texture path
 with a three-second self-closing UI run:
 
-    docker compose exec rosplat rosplat-entrypoint python3 -m docker.ui_smoke_test
+    docker compose -f docker/docker-compose.yml exec rosplat rosplat-entrypoint python3 -m docker.ui_smoke_test
 
 The Compose configuration enables the graphics, display, and utility driver
 capabilities required for Vulkan and X11 presentation. `wgpu-py` is forced to
@@ -155,24 +154,45 @@ Inside the Docker container the messages are already built and sourced. For a ma
 
 ### Testing Gaussian Visualization
 
-To test visualizing Gaussians over ROS2 messages:
+The development container is a reusable background service. Build it once
+after cloning or whenever Docker/native dependencies change:
 
-1.  Place your `PLY` file under the `data/` directory.
-2.  Start the container with `./run_docker.sh -u` in two terminals:
+```bash
+./docker/run_docker.sh -b
+```
 
-*   **Terminal 1:** Run the visualizer:
+Normal Python source edits are bind-mounted into `/workspace` immediately and
+do not require rebuilding or recreating the container. Use the two host-side
+helpers from the repository root:
 
-    ```bash
-        python3 -m rosplat.main
-    ```
+```bash
+# Terminal 1: start/reuse the container and run the Vulkan ImGui app
+./docker/launch_ui.sh
 
-*   **Terminal 2:** Publish Gaussian data:
+# Terminal 2: stream a repository PLY using the same container
+./docker/publish_ply.sh data/horse.ply
+```
 
-    ```bash
-        python3 misc/generate_gaussian_bag.py --ply-path data/your_file.ply
-    ```
+The publisher accepts the existing options after the PLY path:
 
-The `generate_gaussian_bag.py` script waits for a subscriber, then publishes the scene once in bounded batches on `/gaussian_test`. In ROSplat, select that topic in **ROS Settings** and click **Add** to begin the stream.
+```bash
+./docker/publish_ply.sh data/horse.ply --batch-size 10000 --rate 10
+./docker/publish_ply.sh data/horse.ply --topic /my_gaussians
+```
+
+The default topic is `/gaussian_test`. In ROSplat, select it in **ROS
+Settings** and click **Add**. The publisher waits for that subscription before
+sending anything, so either terminal can be started first.
+
+Closing the UI or publisher only stops that foreground process; the container
+continues running and is reused by the next command. Check or stop it explicitly:
+
+```bash
+docker compose -f docker/docker-compose.yml ps
+./docker/run_docker.sh -c
+```
+
+Use `-c` only when you intentionally want to stop the development service.
 
 Contributions
 -------------
