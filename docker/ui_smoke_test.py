@@ -4,6 +4,7 @@ from imgui_bundle import imgui, implot
 from rendercanvas.auto import loop
 
 from rosplat.main import App
+from rosplat.render.renderer import RenderOutputMode
 
 
 class UiSmokeApp(App):
@@ -20,9 +21,22 @@ class UiSmokeApp(App):
 
 
 def main() -> None:
+    app = UiSmokeApp()
+    loop.call_later(
+        0.75,
+        app.world_settings.update_render_output,
+        RenderOutputMode.DEPTH,
+    )
+    loop.call_later(1.25, app.world_settings.update_sh_degree, 0)
+    loop.call_later(1.5, app.world_settings.update_scale_modifier, 1.25)
+    loop.call_later(
+        1.75,
+        app.world_settings.update_render_output,
+        RenderOutputMode.OPACITY,
+    )
     loop.call_later(3.0, loop.stop)
-    UiSmokeApp().run()
-    print("backend=wgpu-vulkan imgui=ok implot=ok")
+    app.run()
+    print("backend=wgpu-vulkan imgui=ok implot=ok render-settings=ok")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from imgui_bundle import (
 )
 # Local modules
 from rosplat.core import util
+from rosplat.render.renderer import RenderOutputMode
 from rosplat.ros import ROSNodeManager
 
 
@@ -95,30 +96,112 @@ def load_file() -> None:
             util.logger.error(f"Selected file is not a PLY file: {file[0]}")
         static.open_file_dialog = None
 
+RENDER_OUTPUT_LABELS = {
+    RenderOutputMode.COLOR: "Color",
+    RenderOutputMode.DEPTH: "Depth",
+    RenderOutputMode.OPACITY: "Opacity",
+}
 
-def _renderer_settings() -> None:
-    imgui.text(f"Renderer: {world_settings.get_renderer_type().value}")
+
+def _status_row(label: str, value: str) -> None:
+    imgui.table_next_row()
+    imgui.table_set_column_index(0)
+    imgui.text_disabled(label)
+    imgui.table_set_column_index(1)
+    imgui.text_wrapped(value)
+
+
+def _item_tooltip(message: str) -> None:
+    if imgui.is_item_hovered():
+        imgui.set_tooltip(message)
+
+
+@immapp.static(scale_modifier=None, settings_id=None)
+def display_renderer_tab() -> None:
+    """Display scene actions, renderer status, and visualization controls."""
+    static = display_renderer_tab
     renderer = world_settings.gauss_renderer
-    if renderer is not None:
-        imgui.text(f"Device capacity: {renderer.capacity:,} splats")
-    imgui.text("Projection, tile sorting, and rasterization run in Spirula Vulkan.")
+    if static.settings_id != id(world_settings):
+        static.settings_id = id(world_settings)
+        static.scale_modifier = world_settings.scale_modifier
 
+    imgui.separator_text("Status")
+    if renderer is None:
+        imgui.text_disabled("Renderer is initializing...")
+    elif imgui.begin_table("RendererStatus", 2):
+        _status_row("Backend", world_settings.get_renderer_type().value)
+        _status_row("Device", renderer.device_name)
+        _status_row("Frame rate", f"{imgui.get_io().framerate:.1f} FPS")
+        _status_row("Splats", f"{world_settings.get_num_gaussians():,}")
+        _status_row("Scene SH", f"Degree {renderer.scene_sh_degree}")
+        imgui.end_table()
 
-def display_parameters_tab() -> None:
-    """
-    Display rendering and parameter control tab.
-    """
-    imgui.text(f"FPS: {imgui.get_io().framerate:.1f}")
-    imgui.text(f"Num of Gauss: {world_settings.get_num_gaussians()}")
+    imgui.separator_text("Scene")
     load_file()
     imgui.same_line()
-    if imgui.button("Reset Gaussians"):
+    if imgui.button("Clear"):
         world_settings.reset_gaussians()
     imgui.same_line()
-    if imgui.button("Screenshot"):
+    if imgui.button("Capture"):
         take_screenshot(f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
-    imgui.text("Parameters:")
-    _renderer_settings()
+
+    imgui.separator_text("Appearance")
+    output_modes = list(RenderOutputMode)
+    current_output = output_modes.index(world_settings.render_output)
+    imgui.text("Output")
+    imgui.set_next_item_width(-1)
+    changed, current_output = imgui.combo(
+        "##RenderOutput",
+        current_output,
+        [RENDER_OUTPUT_LABELS[mode] for mode in output_modes],
+    )
+    _item_tooltip(
+        "Color shows spherical-harmonic shading. Depth is auto-normalized "
+        "per frame. Opacity shows accumulated Gaussian coverage."
+    )
+    if changed:
+        world_settings.update_render_output(output_modes[current_output])
+
+    scene_degree = renderer.scene_sh_degree if renderer is not None else 0
+    sh_options = [f"Auto (scene degree {scene_degree})", "0 — DC only"]
+    sh_options.extend(str(degree) for degree in range(1, scene_degree + 1))
+    requested_degree = world_settings.active_sh_degree
+    current_sh = 0 if requested_degree is None else min(requested_degree, scene_degree) + 1
+    imgui.text("Spherical harmonics")
+    imgui.set_next_item_width(-1)
+    if renderer is None:
+        imgui.begin_disabled()
+    changed, current_sh = imgui.combo("##SphericalHarmonics", current_sh, sh_options)
+    _item_tooltip(
+        "Lower degrees remove view-dependent color detail. Auto uses the "
+        "highest degree stored in the current scene."
+    )
+    if renderer is None:
+        imgui.end_disabled()
+    if changed:
+        degree = None if current_sh == 0 else current_sh - 1
+        world_settings.update_sh_degree(degree)
+
+    imgui.text("Splat scale")
+    imgui.set_next_item_width(-70)
+    _, static.scale_modifier = imgui.slider_float(
+        "##SplatScale",
+        static.scale_modifier,
+        0.05,
+        3.0,
+        "%.2f×",
+    )
+    scale_edit_finished = imgui.is_item_deactivated_after_edit()
+    _item_tooltip(
+        "Multiplies every Gaussian's scale. The value is applied when you "
+        "release the control to keep large streamed scenes responsive."
+    )
+    imgui.same_line()
+    if imgui.button("Reset##SplatScale"):
+        static.scale_modifier = 1.0
+        world_settings.update_scale_modifier(1.0)
+    elif scale_edit_finished:
+        world_settings.update_scale_modifier(static.scale_modifier)
 
 
 @immapp.static(
@@ -127,20 +210,19 @@ def display_parameters_tab() -> None:
     active_topics=[],
     prev_time=-1.0
 )
-def display_ros_tab() -> None:
+def display_streams_tab() -> None:
     """
-    Display ROS topic selector and listener management.
+    Display ROS topic discovery and subscription management.
     """
-    static = display_ros_tab
-    imgui.text("Add and Remove ROS nodes here.")
-    imgui.same_line()
+    static = display_streams_tab
+    imgui.text_wrapped("Discover ROS 2 topics and subscribe them to ROSplat.")
 
     current_time = imgui.get_time()
     if static.prev_time == -1.0 or current_time - static.prev_time > 1.0:
         static.available_topics = ros_node_manager._graph.get_topic_names_and_types()
         static.prev_time = current_time
 
-    if imgui.button("Refresh"):
+    if imgui.button("Refresh topics"):
         static.available_topics = ros_node_manager._graph.get_topic_names_and_types()
 
     if imgui.begin_table("TopicsTable", 3):
@@ -159,7 +241,7 @@ def display_ros_tab() -> None:
             imgui.text(topic[1][0])
 
         imgui.table_next_column()
-        imgui.text("Active Topics")
+        imgui.text("Subscriptions")
         for i, topic in enumerate(static.active_topics.copy()):
             changed, active = imgui.checkbox(f"{i}", True)
             imgui.same_line()
@@ -172,7 +254,7 @@ def display_ros_tab() -> None:
     is_valid = static.selected_topic and static.selected_topic not in static.active_topics
     if not is_valid:
         imgui.begin_disabled()
-    if imgui.button("Add"):
+    if imgui.button("Subscribe"):
         static.active_topics.append(static.selected_topic)
         static.active_topics.sort()
         ros_node_manager.add_listener(static.selected_topic)
@@ -291,13 +373,13 @@ def main_ui(this_world_settings) -> None:
 
     if imgui.begin("Main Application"):
         if imgui.begin_tab_bar("MainTabs"):
-            if imgui.begin_tab_item("ROSplat")[0]:
-                display_parameters_tab()
+            if imgui.begin_tab_item("Renderer")[0]:
+                display_renderer_tab()
                 imgui.end_tab_item()
-            if imgui.begin_tab_item("ROS Settings")[0]:
-                display_ros_tab()
+            if imgui.begin_tab_item("Streams")[0]:
+                display_streams_tab()
                 imgui.end_tab_item()
-            if imgui.begin_tab_item("Camera Settings")[0]:
+            if imgui.begin_tab_item("Camera")[0]:
                 display_camera_tab()
                 imgui.end_tab_item()
             if imgui.begin_tab_item("Frames")[0]:
