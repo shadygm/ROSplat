@@ -62,14 +62,9 @@ For an interactive development shell or cleanup:
     ./docker/run_docker.sh -u
     ./docker/run_docker.sh -c
 
-After starting the container, verify ROS imports and a real Spirula Vulkan render with:
+Run the unit-test suite inside the development container with:
 
-    docker compose -f docker/docker-compose.yml exec rosplat rosplat-entrypoint python3 -m docker.smoke_test
-
-Verify the complete Dear ImGui window, Vulkan swapchain, and splat texture path
-with a three-second self-closing UI run:
-
-    docker compose -f docker/docker-compose.yml exec rosplat rosplat-entrypoint python3 -m docker.ui_smoke_test
+    docker compose -f docker/docker-compose.yml exec rosplat rosplat-entrypoint python3 -m unittest discover -s tests
 
 The Compose configuration enables the graphics, display, and utility driver
 capabilities required for Vulkan and X11 presentation. `wgpu-py` is forced to

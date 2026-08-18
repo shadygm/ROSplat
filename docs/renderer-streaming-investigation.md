@@ -109,19 +109,9 @@ Additional results:
   deliberately retained legacy-concatenation baseline, so it is not an idle
   application-memory measurement.
 
-The real default workflow was also exercised with the PLY publisher at 30 Hz,
-ROS discovery/subscription, the complete WGPU/ImGui window, GUI-thread queue
-draining, native appends, and final GPU count validation:
-
-```bash
-# Terminal 1
-python3 misc/generate_gaussian_bag.py \
-  --ply-path data/horse.ply --batch-size 1000 --rate 30
-
-# Terminal 2
-python3 -m docker.streaming_ui_smoke_test \
-  --expected-splats 1000000 --timeout 60
-```
+The real default workflow was also exercised manually with the PLY publisher at
+30 Hz, ROS discovery/subscription, the complete WGPU/ImGui window, GUI-thread
+queue draining, native appends, and final GPU count validation.
 
 It completed with both CPU and GPU counts at 1,000,000 in **38.050 s**. The
 rate limit alone requires at least 33.333 s, so the complete application added

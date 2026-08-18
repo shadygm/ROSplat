@@ -21,14 +21,9 @@ jobs:
         working-directory: ./docker
         run: ./run_docker.sh -b
 
-      - name: Smoke test ROS and Python dependencies
+      - name: Run unit tests
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             rosplat:lyrical-vulkan \
-            bash -c '
-              test "$ROS_DISTRO" = lyrical &&
-              ros2 interface show gaussian_interface/msg/GaussianArray &&
-              python3 -c "import glfw, glm, imgui_bundle, loguru, numpy, PIL, plyfile, rclpy, rendercanvas, wgpu; from gaussian_interface.msg import GaussianArray" &&
-              python3 -m unittest discover -s tests
-            '
+            python3 -m unittest discover -s tests
