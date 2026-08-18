@@ -1,0 +1,29 @@
+name: Build ROSplat Docker - Lyrical
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-lyrical:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Build ROS 2 Lyrical and Spirula Vulkan image
+        working-directory: ./docker
+        run: ./run_docker.sh -b
+
+      - name: Run unit tests
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            rosplat:lyrical-vulkan \
+            python3 -m unittest discover -s tests

@@ -26,8 +26,8 @@ class Camera:
         self.position = np.array([0.0, 0.0, 3.0], dtype=np.float32)
         # look‐direction
         self.front = np.array([0.0, 0.0, -1.0], dtype=np.float32)
-        # inverted up‐vector
-        self.up    = np.array([0.0, -1.0, 0.0], dtype=np.float32)
+        # conventional right-handed world up
+        self.up    = np.array([0.0, 1.0, 0.0], dtype=np.float32)
 
         # derive right from front × up
         self._reorthonormalize()
@@ -165,6 +165,16 @@ class Camera:
         upv   = glm.vec3(*self.up)
         return np.array(glm.lookAt(pos, tgt, upv), dtype=np.float32)
 
+    def get_view_matrix_opencv(self) -> np.ndarray:
+        """Return a world-to-camera matrix using Spirula's OpenCV axes.
+
+        ``glm.lookAt`` uses graphics camera coordinates, where the camera looks
+        down negative Z and positive Y points up. Spirula expects positive Z
+        in front of the camera and positive Y pointing down.
+        """
+        opengl_to_opencv = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)
+        return opengl_to_opencv @ self.get_view_matrix()
+
     def get_view_matrix_glm(self) -> np.ndarray:
         """Alias for backward compatibility."""
         return self.get_view_matrix()
@@ -182,7 +192,7 @@ class Camera:
 
     def get_intrinsics_matrix(self) -> np.ndarray:
         """3×3 pinhole intrinsics."""
-        f = self.w / (2 * math.tan(self.fovy/2))
+        f = self.h / (2 * math.tan(self.fovy/2))
         return np.array([
             [f, 0, self.w/2],
             [0, f, self.h/2],

@@ -1,0 +1,13 @@
+**
+!.dockerignore
+!docker/Dockerfile
+!docker/entrypoint.sh
+!requirements.txt
+!CMakeLists.txt
+!native/
+!native/**
+!external/
+!external/spirula-studio/
+!external/spirula-studio/**
+!gaussian_interface/
+!gaussian_interface/**

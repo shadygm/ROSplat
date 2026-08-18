@@ -18,67 +18,78 @@ Features
 *   **Real-Time Visualization:** Render millions of Gaussian "splats" in real time.
 *   **ROS2 Integration:** Built on ROS2 for online data exchange of Gaussians, Images, and IMU data.
 *   **Custom Gaussian Messages:** Uses custom message types (_SingleGaussian_ and _GaussianArray_) to encapsulate properties such as position, rotation, scale, opacity, and spherical harmonics.
-*   **CUDA and OpenGL Rendering:** Supports GPU-accelerated rendering using CUDA and OpenGL.
+*   **Portable Vulkan Rendering:** Uses Spirula Studio's Vulkan projection,
+    tile sorting, and Gaussian rasterization through a small native bridge.
+*   **Vulkan ImGui UI:** The application and all dynamic textures use
+    Dear ImGui through wgpu-py's Vulkan backend; there is no CUDA, Torch,
+    gsplat, or OpenGL renderer path.
 
 Setup
 -----
 
-This project was developed and tested on **Ubuntu 24.04 LTS** using **ROS2 Jazzy**. Please note: **Performance degrades significantly without an NVIDIA graphics card.**
+The supported container targets **Ubuntu 26.04 LTS**, **ROS 2 Lyrical**, and a
+Vulkan 1.2-capable GPU. The renderer requires Vulkan buffer device addresses
+and timeline semaphores, matching Spirula Studio's backend requirements.
 
 ### Dependencies
 
-*   **Mandatory:** ROS2 (tested on ROS2 Jazzy)
-*   **Optional (for GPU-based Sorting):**
-    *   `cupy` (ensure compatibility with your CUDA version)
-    *   `torch` (if using PyTorch for GPU sorting)
-    *   `gsplat` (for CUDA-based rendering)
+*   Docker with the Compose plugin
+*   A Vulkan 1.2-capable GPU and current graphics driver
+*   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+    when using an NVIDIA GPU through Docker
 
-To install the optional GPU-based libraries individually:
-
-    pip install cupy-cuda12x  # Install Cupy (replace 12x with your CUDA version)
-
-    pip install torch         # Install PyTorch
-
-    pip install git+https://github.com/nerfstudio-project/gsplat.git # Install gsplat for CUDA-based rendering
-The program will automatically prioritize sorting methods in the following order: **1) Torch → 2) Cupy → 3) CPU**
-
-
-To install all dependencies at once:
-
-    pip install -r requirements.txt        # For GPU acceleration
-
-
-    pip install -r requirements-no-gpu.txt  # Without GPU acceleration
+The Docker image builds the pinned Spirula Studio source, its Slang shaders,
+the ROSplat native bridge, ROS, the Vulkan UI dependencies, and the generated
+`gaussian_interface` messages. CUDA and PyTorch are not required.
 
 ### Docker-Based Setup
 
-Alternatively, you can set up the project using Docker. A setup script is available under the `docker` directory.
+Docker is the supported setup path. On Arch Linux, install the NVIDIA Container Toolkit once:
 
-Before running Docker, ensure you have installed:
+    sudo pacman -S --needed nvidia-container-toolkit
 
-    sudo apt-get install -y nvidia-container-toolkit
+The Compose service requests every available GPU through the toolkit's CDI device. Confirm the CDI devices are visible with:
 
-This enables GPU communication between the host and the container. If you come across any other issues, follow the instructions under [the official NVIDIA guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+    nvidia-ctk cdi list
 
-Then, to build and run the Docker container:
+Then build and run ROSplat:
 
-    cd docker
-    ./run_docker.sh -h    # Display help and usage instructions
-    ./run_docker.sh -bu   # Build the Docker image and launch the container with docker-compose
+    ./docker/run_docker.sh -b    # Build rosplat:lyrical-vulkan once
+    ./docker/launch_ui.sh        # Start/reuse the container and launch ROSplat
 
-**Important:** Ensure the host machine's CUDA version matches the version specified in the Dockerfile. If you are using a CUDA version other than 12.6, update the Dockerfile accordingly.
+For an interactive development shell or cleanup:
 
-Additionally, ensure you specify your GPU architecture under the `TORCH_CUDA_ARCH_LIST` variable in the Dockerfile. This is necessary for proper compilation of CUDA-based libraries. For example, if your GPU architecture is `8.6`, update the Dockerfile as follows:
+    ./docker/run_docker.sh -u
+    ./docker/run_docker.sh -c
 
-    ENV TORCH_CUDA_ARCH_LIST="8.6"
+Run the unit-test suite inside the development container with:
 
-Refer to [NVIDIA's CUDA GPU support matrix](https://developer.nvidia.com/cuda-gpus) to find the correct architecture for your GPU.
+    docker compose -f docker/docker-compose.yml exec rosplat rosplat-entrypoint python3 -m unittest discover -s tests
 
-#### Accessing ROSplat Inside the Container
+The Compose configuration enables the graphics, display, and utility driver
+capabilities required for Vulkan and X11 presentation. `wgpu-py` is forced to
+Vulkan and ROSplat rejects a different backend at startup.
 
-After starting the Docker container, navigate to the project directory inside the container:
+### Native build without Docker
 
-    cd projects/ROSplat
+Initialize the pinned renderer dependency and build the bridge:
+
+    git submodule update --init --recursive
+    cmake -S . -B build-native -G Ninja -DCMAKE_BUILD_TYPE=Release
+    cmake --build build-native --target rosplat_spirula
+
+The first configure downloads Spirula's pinned Slang compiler and the first
+build compiles its SPIR-V shader set. ROSplat finds
+`build-native/librosplat_spirula.so` automatically. Override the path with
+`ROSPLAT_SPIRULA_LIBRARY` when installing elsewhere.
+
+### Third-party licensing
+
+Spirula Studio stays pinned and unmodified in `external/spirula-studio`, with
+its upstream history and GPL-3.0 license intact. ROSplat-owned bridge code is
+under `native/`. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for the
+exact revision and license boundary. ROSplat itself is GPL-3.0, so the combined
+distribution is license-compatible without relicensing upstream files.
 
 Building the Gaussian Messages
 ------------------------------
@@ -113,7 +124,7 @@ ROSplat defines two custom ROS2 messages to handle Gaussian data, located in the
 
     gaussian_interface/SingleGaussian[] gaussians
 
-### Building the Messages
+### Building the Messages Without Docker
 
 **a) Build your workspace using colcon:**
 
@@ -128,32 +139,51 @@ ROSplat defines two custom ROS2 messages to handle Gaussian data, located in the
 Usage
 -----
 
-Once the Gaussian messages are built, you can launch the visualizer from the project's root directory:
+Inside the Docker container the messages are already built and sourced. For a manual installation, build the messages first and then launch the visualizer from the project's root directory:
 
     python3 -m rosplat.main
 
 ### Testing Gaussian Visualization
 
-To test visualizing Gaussians over ROS2 messages:
+The development container is a reusable background service. Build it once
+after cloning or whenever Docker/native dependencies change:
 
-1.  Place your `PLY` file under the `data/` directory.
-2.  Open **two terminals inside the Docker container**:
+```bash
+./docker/run_docker.sh -b
+```
 
-*   **Terminal 1:** Run the visualizer:
+Normal Python source edits are bind-mounted into `/workspace` immediately and
+do not require rebuilding or recreating the container. Use the two host-side
+helpers from the repository root:
 
-    ```bash
-    cd projects/ROSplat
-    python3 -m rosplat.main
-    ```
+```bash
+# Terminal 1: start/reuse the container and run the Vulkan ImGui app
+./docker/launch_ui.sh
 
-*   **Terminal 2:** Publish Gaussian data:
+# Terminal 2: stream a repository PLY using the same container
+./docker/publish_ply.sh data/horse.ply
+```
 
-    ```bash
-    cd projects/ROSplat/misc
-    python3 generate_gaussian_bag.py --ply_path ../data/your_file.ply
-    ```
+The publisher accepts the existing options after the PLY path:
 
-The `generate_gaussian_bag.py` script will continuously publish batches of Gaussian messages to the `/gaussian_test` topic, which the visualizer will display in real time whenever you are subscribed to it.
+```bash
+./docker/publish_ply.sh data/horse.ply --batch-size 10000 --rate 10
+./docker/publish_ply.sh data/horse.ply --topic /my_gaussians
+```
+
+The default topic is `/gaussian_test`. In ROSplat, select it in **ROS
+Settings** and click **Add**. The publisher waits for that subscription before
+sending anything, so either terminal can be started first.
+
+Closing the UI or publisher only stops that foreground process; the container
+continues running and is reused by the next command. Check or stop it explicitly:
+
+```bash
+docker compose -f docker/docker-compose.yml ps
+./docker/run_docker.sh -c
+```
+
+Use `-c` only when you intentionally want to stop the development service.
 
 Contributions
 -------------

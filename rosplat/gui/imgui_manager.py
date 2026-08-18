@@ -1,11 +1,8 @@
 import queue
 from datetime import datetime
 
-import cv2
 import numpy as np
-import OpenGL.GL as gl
 from PIL import Image
-from rosplat.config import RendererType
 
 # ImGui Bundle
 from imgui_bundle import (
@@ -16,17 +13,8 @@ from imgui_bundle import (
 )
 # Local modules
 from rosplat.core import util
+from rosplat.render.renderer import RenderOutputMode
 from rosplat.ros import ROSNodeManager
-
-try:
-    from rosplat.render.renderer import CUDARenderer
-    import torch
-    HAS_TORCH = True
-except ImportError:
-    HAS_TORCH = False
-    util.logger.warning("CUDARenderer not available. CUDA rendering will be disabled.")
-    from rosplat.render.renderer import OpenGLRenderer
-    util.logger.info("Using OpenGL Renderer")
 
 
 # === Global State ===
@@ -36,10 +24,9 @@ latest_frame = [None]  # mutable container
 imu_queue = queue.Queue(maxsize=1)
 ros_node_manager = ROSNodeManager()
 
-type_visualization = [
-    "Gaussian Ball", "Flat Ball", "Billboard",
-    "Depth", "SH:0", "SH:0~1", "SH:0~2", "SH:0~3 (default)"
-]
+def shutdown_ros() -> None:
+    """Stop ROS listeners and their executor before rclpy is shut down."""
+    ros_node_manager.shutdown()
 
 # IMU history
 accel_x, accel_y, accel_z = [], [], []
@@ -47,14 +34,12 @@ gyro_x, gyro_y, gyro_z = [], [], []
 
 
 def take_screenshot(filename: str = "screenshot.png") -> None:
-    """
-    Capture the current OpenGL framebuffer and save it as an image.
-    """
-    x, y, width, height = gl.glGetIntegerv(gl.GL_VIEWPORT)
-    data = gl.glReadPixels(x, y, width, height, gl.GL_RGB, gl.GL_UNSIGNED_BYTE)
-    image = Image.frombytes("RGB", (width, height), data)
-    image = image.transpose(Image.FLIP_TOP_BOTTOM)
-    image.save(filename)
+    """Save the most recent Spirula render without reading a GL framebuffer."""
+    renderer = world_settings.gauss_renderer
+    if renderer is None:
+        util.logger.warning("Cannot take a screenshot before the renderer starts")
+        return
+    Image.fromarray(renderer.latest_rgba, mode="RGBA").save(filename)
     util.logger.info(f"[Screenshot saved] {filename}")
 
 
@@ -103,51 +88,119 @@ def load_file() -> None:
     if static.open_file_dialog and static.open_file_dialog.ready():
         file = static.open_file_dialog.result()
         if file and file[0].lower().endswith(".ply"):
-            world_settings.load_ply(file[0])
+            try:
+                world_settings.load_ply(file[0])
+            except (OSError, ValueError) as error:
+                util.logger.error(f"Could not load PLY '{file[0]}': {error}")
         elif file:
             util.logger.error(f"Selected file is not a PLY file: {file[0]}")
         static.open_file_dialog = None
 
-
-def _renderer_settings() -> None:
-    imgui.text("Renderer:")
-    if HAS_TORCH and torch.cuda.is_available():
-        options = [RendererType.CUDA.value, RendererType.OPENGL.value]
-        current_idx = 0 if world_settings.get_renderer_type() == RendererType.CUDA else 1
-        changed, current_idx = imgui.combo("Renderer", current_idx, options)
-        if changed:
-            world_settings.switch_renderer(RendererType.CUDA if current_idx == 0 else RendererType.OPENGL)
-    if not isinstance(world_settings.gauss_renderer, CUDARenderer):
-        imgui.text("OpenGL Renderer: Sorting needed.")
-        if imgui.button("Sort and Update"):
-            world_settings.gauss_renderer.sort_and_update()
-        _, world_settings.auto_sort = imgui.checkbox("Auto-sort", world_settings.auto_sort)
-        changed, mode = imgui.combo("Visualization Type", world_settings.render_mode, type_visualization)
-        if changed:
-            world_settings.update_render_mode(mode)
-    else:
-        imgui.text("CUDA Renderer: No sorting needed.")
-        world_settings.auto_sort = False
+RENDER_OUTPUT_LABELS = {
+    RenderOutputMode.COLOR: "Color",
+    RenderOutputMode.DEPTH: "Depth",
+    RenderOutputMode.OPACITY: "Opacity",
+}
 
 
-def display_parameters_tab() -> None:
-    """
-    Display rendering and parameter control tab.
-    """
-    imgui.text(f"FPS: {imgui.get_io().framerate:.1f}")
-    imgui.text(f"Num of Gauss: {world_settings.get_num_gaussians()}")
+def _status_row(label: str, value: str) -> None:
+    imgui.table_next_row()
+    imgui.table_set_column_index(0)
+    imgui.text_disabled(label)
+    imgui.table_set_column_index(1)
+    imgui.text_wrapped(value)
+
+
+def _item_tooltip(message: str) -> None:
+    if imgui.is_item_hovered():
+        imgui.set_tooltip(message)
+
+
+@immapp.static(scale_modifier=None, settings_id=None)
+def display_renderer_tab() -> None:
+    """Display scene actions, renderer status, and visualization controls."""
+    static = display_renderer_tab
+    renderer = world_settings.gauss_renderer
+    if static.settings_id != id(world_settings):
+        static.settings_id = id(world_settings)
+        static.scale_modifier = world_settings.scale_modifier
+
+    imgui.separator_text("Status")
+    if renderer is None:
+        imgui.text_disabled("Renderer is initializing...")
+    elif imgui.begin_table("RendererStatus", 2):
+        _status_row("Device", renderer.device_name)
+        _status_row("Frame rate", f"{imgui.get_io().framerate:.1f} FPS")
+        _status_row("Splats", f"{world_settings.get_num_gaussians():,}")
+        _status_row("Scene SH", f"Degree {renderer.scene_sh_degree}")
+        imgui.end_table()
+
+    imgui.separator_text("Scene")
     load_file()
     imgui.same_line()
-    if imgui.button("Reset Gaussians"):
+    if imgui.button("Clear"):
         world_settings.reset_gaussians()
     imgui.same_line()
-    if imgui.button("Screenshot"):
+    if imgui.button("Capture"):
         take_screenshot(f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
-    imgui.text("Parameters:")
-    # TODO: Add more parameters for the CUDA renderer. 
-    # Currently, only the OpenGL has parameters.
-    # _, world_settings.overwrite_gaussians = imgui.checkbox("Overwrite Gaussians", world_settings.overwrite_gaussians)
-    _renderer_settings()
+
+    imgui.separator_text("Appearance")
+    output_modes = list(RenderOutputMode)
+    current_output = output_modes.index(world_settings.render_output)
+    imgui.text("Output")
+    imgui.set_next_item_width(-1)
+    changed, current_output = imgui.combo(
+        "##RenderOutput",
+        current_output,
+        [RENDER_OUTPUT_LABELS[mode] for mode in output_modes],
+    )
+    _item_tooltip(
+        "Color shows spherical-harmonic shading. Depth is auto-normalized "
+        "per frame. Opacity shows accumulated Gaussian coverage."
+    )
+    if changed:
+        world_settings.update_render_output(output_modes[current_output])
+
+    scene_degree = renderer.scene_sh_degree if renderer is not None else 0
+    sh_options = [f"Auto (scene degree {scene_degree})", "0 — DC only"]
+    sh_options.extend(str(degree) for degree in range(1, scene_degree + 1))
+    requested_degree = world_settings.active_sh_degree
+    current_sh = 0 if requested_degree is None else min(requested_degree, scene_degree) + 1
+    imgui.text("Spherical harmonics")
+    imgui.set_next_item_width(-1)
+    if renderer is None:
+        imgui.begin_disabled()
+    changed, current_sh = imgui.combo("##SphericalHarmonics", current_sh, sh_options)
+    _item_tooltip(
+        "Lower degrees remove view-dependent color detail. Auto uses the "
+        "highest degree stored in the current scene."
+    )
+    if renderer is None:
+        imgui.end_disabled()
+    if changed:
+        degree = None if current_sh == 0 else current_sh - 1
+        world_settings.update_sh_degree(degree)
+
+    imgui.text("Splat scale")
+    imgui.set_next_item_width(-70)
+    _, static.scale_modifier = imgui.slider_float(
+        "##SplatScale",
+        static.scale_modifier,
+        0.05,
+        3.0,
+        "%.2f×",
+    )
+    scale_edit_finished = imgui.is_item_deactivated_after_edit()
+    _item_tooltip(
+        "Multiplies every Gaussian's scale. The value is applied when you "
+        "release the control to keep large streamed scenes responsive."
+    )
+    imgui.same_line()
+    if imgui.button("Reset##SplatScale"):
+        static.scale_modifier = 1.0
+        world_settings.update_scale_modifier(1.0)
+    elif scale_edit_finished:
+        world_settings.update_scale_modifier(static.scale_modifier)
 
 
 @immapp.static(
@@ -156,20 +209,19 @@ def display_parameters_tab() -> None:
     active_topics=[],
     prev_time=-1.0
 )
-def display_ros_tab() -> None:
+def display_streams_tab() -> None:
     """
-    Display ROS topic selector and listener management.
+    Display ROS topic discovery and subscription management.
     """
-    static = display_ros_tab
-    imgui.text("Add and Remove ROS nodes here.")
-    imgui.same_line()
+    static = display_streams_tab
+    imgui.text_wrapped("Discover ROS 2 topics and subscribe them to ROSplat.")
 
     current_time = imgui.get_time()
     if static.prev_time == -1.0 or current_time - static.prev_time > 1.0:
         static.available_topics = ros_node_manager._graph.get_topic_names_and_types()
         static.prev_time = current_time
 
-    if imgui.button("Refresh"):
+    if imgui.button("Refresh topics"):
         static.available_topics = ros_node_manager._graph.get_topic_names_and_types()
 
     if imgui.begin_table("TopicsTable", 3):
@@ -188,7 +240,7 @@ def display_ros_tab() -> None:
             imgui.text(topic[1][0])
 
         imgui.table_next_column()
-        imgui.text("Active Topics")
+        imgui.text("Subscriptions")
         for i, topic in enumerate(static.active_topics.copy()):
             changed, active = imgui.checkbox(f"{i}", True)
             imgui.same_line()
@@ -201,7 +253,7 @@ def display_ros_tab() -> None:
     is_valid = static.selected_topic and static.selected_topic not in static.active_topics
     if not is_valid:
         imgui.begin_disabled()
-    if imgui.button("Add"):
+    if imgui.button("Subscribe"):
         static.active_topics.append(static.selected_topic)
         static.active_topics.sort()
         ros_node_manager.add_listener(static.selected_topic)
@@ -218,62 +270,27 @@ def display_camera_tab() -> None:
     imgui.text("Camera settings go here.")
 
 
-def create_texture_from_frame(frame: np.ndarray) -> int:
-    """
-    Create an OpenGL texture from a NumPy image.
-    """
-    tex = gl.glGenTextures(1)
-    gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR)
-    gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
-
-    h, w, c = frame.shape
-    fmt = gl.GL_RGB if c == 3 else gl.GL_RGBA
-    gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, fmt, w, h, 0, fmt, gl.GL_UNSIGNED_BYTE, frame)
-    return tex
-
-
-def update_texture(tex: int, frame: np.ndarray) -> None:
-    """
-    Update an OpenGL texture with a new frame.
-    """
-    gl.glBindTexture(gl.GL_TEXTURE_2D, tex)
-    h, w, c = frame.shape
-    fmt = gl.GL_RGB if c == 3 else gl.GL_RGBA
-    gl.glTexSubImage2D(gl.GL_TEXTURE_2D, 0, 0, 0, w, h, fmt, gl.GL_UNSIGNED_BYTE, frame)
-    gl.glFlush()
-
-def refresh() -> None:
-    """
-    Refresh the current set of Gaussians.
-    """
-    world_settings.refresh_gaussians()
-
-
 @immapp.static(image_texture=None, last_frame=None)
 def display_frames_tab() -> None:
-    """
-    Display the most recent frame using OpenGL texture.
-    """
+    """Display the latest ROS image using the active ImGui backend texture."""
     static = display_frames_tab
 
     # Grab the latest image from shared memory
-    if latest_frame[0] is not None:
+    if latest_frame[0] is not None and latest_frame[0] is not static.last_frame:
         static.last_frame = latest_frame[0]
+        frame = np.asarray(static.last_frame)
+        if frame.shape[-1] == 3:
+            alpha = np.full((*frame.shape[:2], 1), 255, dtype=np.uint8)
+            frame = np.concatenate((frame, alpha), axis=-1)
+        static.image_texture = world_settings.texture_registry.upload(
+            "ros-image-frame", np.ascontiguousarray(frame, dtype=np.uint8)
+        )
 
     frame = static.last_frame
 
     if frame is None:
         imgui.text("Waiting for frame...")
         return
-
-    h, w, _ = frame.shape
-    if static.image_texture is None:
-        static.image_texture = create_texture_from_frame(frame)
-    else:
-        update_texture(static.image_texture, frame)
 
     avail_w, avail_h = imgui.get_content_region_avail()
     if implot.begin_plot("Live Frame", size=(avail_w, avail_h)):
@@ -355,13 +372,13 @@ def main_ui(this_world_settings) -> None:
 
     if imgui.begin("Main Application"):
         if imgui.begin_tab_bar("MainTabs"):
-            if imgui.begin_tab_item("ROSplat")[0]:
-                display_parameters_tab()
+            if imgui.begin_tab_item("Renderer")[0]:
+                display_renderer_tab()
                 imgui.end_tab_item()
-            if imgui.begin_tab_item("ROS Settings")[0]:
-                display_ros_tab()
+            if imgui.begin_tab_item("Streams")[0]:
+                display_streams_tab()
                 imgui.end_tab_item()
-            if imgui.begin_tab_item("Camera Settings")[0]:
+            if imgui.begin_tab_item("Camera")[0]:
                 display_camera_tab()
                 imgui.end_tab_item()
             if imgui.begin_tab_item("Frames")[0]:
@@ -382,11 +399,11 @@ def main_ui(this_world_settings) -> None:
         avail_w = int(avail_w)
         avail_h = int(avail_h)
 
-        this_world_settings.update_window_size(avail_w, avail_h)
-        tex = this_world_settings.gauss_renderer.draw()
-        vec2 = imgui.ImVec2(avail_w, avail_h)
-        imgui_tex = imgui.ImTextureRef(tex)
-        imgui.image(imgui_tex, vec2)
-        if imgui.is_window_hovered():
-            this_world_settings.check_inputs()
+        if avail_w > 0 and avail_h > 0:
+            this_world_settings.update_window_size(avail_w, avail_h)
+            tex = this_world_settings.gauss_renderer.draw()
+            vec2 = imgui.ImVec2(avail_w, avail_h)
+            imgui.image(tex, vec2)
+            if imgui.is_window_hovered():
+                this_world_settings.check_inputs()
         imgui.end()

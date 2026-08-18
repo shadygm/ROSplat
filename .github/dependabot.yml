@@ -1,5 +1,23 @@
 version: 2
 updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    target-branch: "main"
+    labels:
+      - "type:chore"
+      - "prio:low"
+      - "status:review"
+    reviewers:
+      - "shadygm"
+    assignees:
+      - "shadygm"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

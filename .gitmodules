@@ -1,0 +1,3 @@
+[submodule "external/spirula-studio"]
+	path = external/spirula-studio
+	url = https://github.com/harry7557558/spirula-studio.git

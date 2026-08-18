@@ -1,0 +1,547 @@
+#include "spirula_bridge.h"
+
+#include "backend/api/BackendRuntime.h"
+#include "backend/api/BackendTypes.h"
+#include "core/Tensor.h"
+#include "engine/Engine.h"
+#include "engine/EngineState.h"
+#include "kernels/optim/Optimizer.cuh"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <limits>
+#include <mutex>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace {
+
+thread_local std::string g_last_error;
+
+template <typename Fn>
+int guard(Fn&& fn) noexcept {
+    try {
+        fn();
+        g_last_error.clear();
+        return 1;
+    } catch (const std::exception& error) {
+        g_last_error = error.what();
+    } catch (...) {
+        g_last_error = "unknown native exception";
+    }
+    return 0;
+}
+
+TorchTensorView view_1d(void* pointer, int64_t count, int channels) {
+    return TorchTensorView{
+        reinterpret_cast<uint64_t>(pointer),
+        sizeof(float),
+        {count, channels},
+    };
+}
+
+TorchTensorView view_2d(void* pointer, int64_t rows, int64_t columns, int channels) {
+    return TorchTensorView{
+        reinterpret_cast<uint64_t>(pointer),
+        sizeof(float),
+        {rows, columns, channels},
+    };
+}
+
+struct DeviceScene {
+    float3* means = nullptr;
+    float4* quats = nullptr;
+    float3* scales = nullptr;
+    float* opacities = nullptr;
+    float3* features_dc = nullptr;
+    float3* features_sh = nullptr;
+    int64_t count = 0;
+    int64_t capacity = 0;
+    int sh_degree = 0;
+    int num_sh = 0;
+
+    void release() {
+        backend::device_free(means);
+        backend::device_free(quats);
+        backend::device_free(scales);
+        backend::device_free(opacities);
+        backend::device_free(features_dc);
+        backend::device_free(features_sh);
+        means = nullptr;
+        quats = nullptr;
+        scales = nullptr;
+        opacities = nullptr;
+        features_dc = nullptr;
+        features_sh = nullptr;
+        count = 0;
+        capacity = 0;
+        sh_degree = 0;
+        num_sh = 0;
+    }
+};
+
+struct HostRender {
+    float3* rgb = nullptr;
+    float* scalar = nullptr;
+    size_t rgb_pixels = 0;
+    size_t scalar_pixels = 0;
+
+    void resize_rgb(size_t requested_pixels) {
+        if (requested_pixels <= rgb_pixels) return;
+        backend::host_free_pinned(rgb);
+        rgb = static_cast<float3*>(
+            backend::host_malloc_pinned(requested_pixels * sizeof(float3)));
+        if (!rgb)
+            throw std::runtime_error("failed to allocate pinned RGB readback buffer");
+        rgb_pixels = requested_pixels;
+    }
+
+    void resize_scalar(size_t requested_pixels) {
+        if (requested_pixels <= scalar_pixels) return;
+        backend::host_free_pinned(scalar);
+        scalar = static_cast<float*>(
+            backend::host_malloc_pinned(requested_pixels * sizeof(float)));
+        if (!scalar)
+            throw std::runtime_error("failed to allocate pinned scalar readback buffer");
+        scalar_pixels = requested_pixels;
+    }
+
+    void release() {
+        backend::host_free_pinned(rgb);
+        backend::host_free_pinned(scalar);
+        rgb = nullptr;
+        scalar = nullptr;
+        rgb_pixels = 0;
+        scalar_pixels = 0;
+    }
+};
+
+class Renderer {
+public:
+    std::mutex mutex;
+    DeviceScene scene;
+    HostRender host;
+    int width = 0;
+    int height = 0;
+    bool camera_ready = false;
+    RosplatSpirulaOutputMode output_mode = ROSPLAT_SPIRULA_OUTPUT_COLOR;
+    int requested_sh_degree = -1;
+    float scale_modifier = 1.0f;
+
+    void reset(int sh_degree, int64_t initial_capacity) {
+        if (sh_degree < 0 || sh_degree > 4)
+            throw std::invalid_argument("SH degree must be in [0, 4]");
+        if (initial_capacity < 0)
+            throw std::invalid_argument("initial capacity cannot be negative");
+
+        engine_reset();
+        scene.release();
+        scene.sh_degree = sh_degree;
+        scene.num_sh = (sh_degree + 1) * (sh_degree + 1) - 1;
+        reserve(initial_capacity);
+        bind_scene();
+    }
+
+    template <typename T>
+    static T* grow_buffer(T* old_pointer, int64_t old_count, int64_t new_count) {
+        if (new_count == 0) return nullptr;
+        T* next = static_cast<T*>(
+            backend::device_malloc_checked(static_cast<size_t>(new_count) * sizeof(T),
+                                           "ROSplat streaming scene"));
+        if (old_pointer && old_count > 0) {
+            backend::memcpy_sync(next, old_pointer,
+                                 static_cast<size_t>(old_count) * sizeof(T),
+                                 backend::MemcpyKind::DeviceToDevice);
+        }
+        backend::device_free(old_pointer);
+        return next;
+    }
+
+    void reserve(int64_t requested) {
+        if (requested <= scene.capacity) return;
+        int64_t next = std::max<int64_t>(requested, std::max<int64_t>(4096, scene.capacity * 2));
+        scene.means = grow_buffer(scene.means, scene.count, next);
+        scene.quats = grow_buffer(scene.quats, scene.count, next);
+        scene.scales = grow_buffer(scene.scales, scene.count, next);
+        scene.opacities = grow_buffer(scene.opacities, scene.count, next);
+        scene.features_dc = grow_buffer(scene.features_dc, scene.count, next);
+        if (scene.num_sh > 0) {
+            scene.features_sh = grow_buffer(
+                scene.features_sh,
+                scene.count * static_cast<int64_t>(scene.num_sh),
+                next * static_cast<int64_t>(scene.num_sh));
+        }
+        scene.capacity = next;
+        bind_scene();
+    }
+
+    void bind_scene() {
+        auto& state = engine();
+        state.cur_num_splats = scene.count;
+        state.max_num_splats = scene.capacity;
+        state.num_sh = scene.num_sh;
+        state.sh_degree = scene.sh_degree;
+
+        state.world.means = DeviceVector<float3>(
+            view_1d(scene.means, scene.capacity, 3));
+        state.world.quats = DeviceVector<float4>(
+            view_1d(scene.quats, scene.capacity, 4));
+        state.world.scales = DeviceVector<float3>(
+            view_1d(scene.scales, scene.capacity, 3));
+        state.world.opacities = DeviceVector<float>(
+            view_1d(scene.opacities, scene.capacity, 1));
+        state.world.features_dc = DeviceVector<float3>(
+            view_1d(scene.features_dc, scene.capacity, 3));
+        if (scene.num_sh > 0) {
+            state.world.features_sh = DeviceTensor2D<float3>(
+                view_2d(scene.features_sh, scene.capacity, scene.num_sh, 3));
+        } else {
+            state.world.features_sh = DeviceTensor2D<float3>();
+        }
+        state.world.initialized = scene.capacity > 0;
+    }
+
+    void append(int64_t batch_count,
+                const float* means,
+                const float* quats,
+                const float* scales,
+                const float* opacities,
+                const float* dc,
+                const float* sh) {
+        if (batch_count < 0)
+            throw std::invalid_argument("append count cannot be negative");
+        if (batch_count == 0) return;
+        if (!means || !quats || !scales || !opacities || !dc)
+            throw std::invalid_argument("append received a null required array");
+        if (scene.num_sh > 0 && !sh)
+            throw std::invalid_argument("append received null higher-order SH data");
+        if (scene.count > std::numeric_limits<int64_t>::max() - batch_count)
+            throw std::overflow_error("splat count overflow");
+
+        const int64_t offset = scene.count;
+        reserve(offset + batch_count);
+        backend::memcpy_sync(scene.means + offset, means,
+                             static_cast<size_t>(batch_count) * sizeof(float3),
+                             backend::MemcpyKind::HostToDevice);
+        backend::memcpy_sync(scene.quats + offset, quats,
+                             static_cast<size_t>(batch_count) * sizeof(float4),
+                             backend::MemcpyKind::HostToDevice);
+        backend::memcpy_sync(scene.scales + offset, scales,
+                             static_cast<size_t>(batch_count) * sizeof(float3),
+                             backend::MemcpyKind::HostToDevice);
+        backend::memcpy_sync(scene.opacities + offset, opacities,
+                             static_cast<size_t>(batch_count) * sizeof(float),
+                             backend::MemcpyKind::HostToDevice);
+        backend::memcpy_sync(scene.features_dc + offset, dc,
+                             static_cast<size_t>(batch_count) * sizeof(float3),
+                             backend::MemcpyKind::HostToDevice);
+        if (scene.num_sh > 0) {
+            backend::memcpy_sync(
+                scene.features_sh + offset * scene.num_sh, sh,
+                static_cast<size_t>(batch_count) * scene.num_sh * sizeof(float3),
+                backend::MemcpyKind::HostToDevice);
+        }
+        scene.count += batch_count;
+        bind_scene();
+    }
+
+    void set_camera(int requested_width,
+                    int requested_height,
+                    const float* view_matrix,
+                    const float* intrinsics) {
+        if (requested_width <= 0 || requested_height <= 0)
+            throw std::invalid_argument("render dimensions must be positive");
+        if (!view_matrix || !intrinsics)
+            throw std::invalid_argument("camera arrays cannot be null");
+
+        float dist_coeffs[8] = {};
+        set_camera_params(
+            requested_width,
+            requested_height,
+            "PINHOLE",
+            "NONE",
+            TorchTensorView{reinterpret_cast<uint64_t>(view_matrix), sizeof(float), {1, 4, 4}},
+            TorchTensorView{reinterpret_cast<uint64_t>(intrinsics), sizeof(float), {1, 4}},
+            TorchTensorView{reinterpret_cast<uint64_t>(dist_coeffs), sizeof(float), {1, 8}});
+        width = requested_width;
+        height = requested_height;
+        camera_ready = true;
+    }
+
+    void set_render_options(int requested_output_mode,
+                            int requested_degree) {
+        if (requested_output_mode < ROSPLAT_SPIRULA_OUTPUT_COLOR ||
+            requested_output_mode > ROSPLAT_SPIRULA_OUTPUT_OPACITY) {
+            throw std::invalid_argument("render output mode must be color, depth, or opacity");
+        }
+        if (requested_degree < -1 || requested_degree > 4) {
+            throw std::invalid_argument("active SH degree must be -1 or in [0, 4]");
+        }
+        output_mode = static_cast<RosplatSpirulaOutputMode>(requested_output_mode);
+        requested_sh_degree = requested_degree;
+    }
+
+    void set_scale_modifier(float requested_modifier) {
+        if (!std::isfinite(requested_modifier) || requested_modifier <= 0.0f)
+            throw std::invalid_argument("scale modifier must be positive and finite");
+        if (requested_modifier == scale_modifier)
+            return;
+
+        const float log_delta = std::log(requested_modifier / scale_modifier);
+        const int64_t numel = scene.count * 3;
+        if (numel > 0) {
+            constexpr int64_t max_chunk = 1 << 20;
+            const int64_t chunk = std::min(numel, max_chunk);
+            std::vector<float> host_delta(static_cast<size_t>(chunk), log_delta);
+            float* device_delta = static_cast<float*>(backend::device_malloc_checked(
+                static_cast<size_t>(chunk) * sizeof(float),
+                "ROSplat scale modifier scratch"));
+            try {
+                backend::memcpy_sync(
+                    device_delta, host_delta.data(),
+                    static_cast<size_t>(chunk) * sizeof(float),
+                    backend::MemcpyKind::HostToDevice);
+                float* scales = reinterpret_cast<float*>(scene.scales);
+                for (int64_t offset = 0; offset < numel; offset += chunk) {
+                    const int64_t count = std::min(chunk, numel - offset);
+                    float_add_into(
+                        DeviceVector<float>(view_1d(scales + offset, count, 1)),
+                        DeviceVector<float>(view_1d(device_delta, count, 1)),
+                        count);
+                }
+            } catch (...) {
+                backend::device_free(device_delta);
+                throw;
+            }
+            backend::device_free(device_delta);
+        }
+        scale_modifier = requested_modifier;
+    }
+
+    void render(uint8_t* output, size_t output_bytes) {
+        if (!output) throw std::invalid_argument("render output cannot be null");
+        if (!camera_ready) throw std::runtime_error("camera has not been configured");
+        const size_t pixel_count = static_cast<size_t>(width) * height;
+        if (output_bytes < pixel_count * 4)
+            throw std::invalid_argument("render output buffer is too small");
+        if (scene.count == 0) {
+            for (size_t index = 0; index < pixel_count; ++index) {
+                output[index * 4 + 0] = 0;
+                output[index * 4 + 1] = 0;
+                output[index * 4 + 2] = 0;
+                output[index * 4 + 3] = 255;
+            }
+            return;
+        }
+
+        const int render_sh_degree = requested_sh_degree < 0
+            ? scene.sh_degree
+            : std::min(requested_sh_degree, scene.sh_degree);
+        forward_3dgs("3dgs", render_sh_degree, true);
+        auto& state = engine();
+        if (output_mode == ROSPLAT_SPIRULA_OUTPUT_COLOR) {
+            auto& rgb = std::get<0>(state.fwd.renders);
+            if (!rgb.data_ptr())
+                throw std::runtime_error("Spirula produced no RGB render buffer");
+            host.resize_rgb(pixel_count);
+            backend::memcpy_sync(host.rgb, rgb.data_ptr(),
+                                 pixel_count * sizeof(float3),
+                                 backend::MemcpyKind::DeviceToHost);
+            for (size_t index = 0; index < pixel_count; ++index) {
+                const float3 color = host.rgb[index];
+                write_gray_or_rgb(output, index, color.x, color.y, color.z);
+            }
+            return;
+        }
+
+        host.resize_scalar(pixel_count);
+        if (output_mode == ROSPLAT_SPIRULA_OUTPUT_DEPTH) {
+            auto& depth = std::get<1>(state.fwd.renders);
+            if (!depth.data_ptr())
+                throw std::runtime_error("Spirula produced no depth render buffer");
+            backend::memcpy_sync(host.scalar, depth.data_ptr(),
+                                 pixel_count * sizeof(float),
+                                 backend::MemcpyKind::DeviceToHost);
+            write_depth(output, pixel_count);
+            return;
+        }
+
+        auto& transmittance = state.fwd.render_Ts;
+        if (!transmittance.data_ptr())
+            throw std::runtime_error("Spirula produced no transmittance render buffer");
+        backend::memcpy_sync(host.scalar, transmittance.data_ptr(),
+                             pixel_count * sizeof(float),
+                             backend::MemcpyKind::DeviceToHost);
+        for (size_t index = 0; index < pixel_count; ++index) {
+            const float opacity = 1.0f - host.scalar[index];
+            write_gray_or_rgb(output, index, opacity, opacity, opacity);
+        }
+    }
+
+    void shutdown() {
+        engine_reset();
+        scene.release();
+        host.release();
+        width = 0;
+        height = 0;
+        camera_ready = false;
+        output_mode = ROSPLAT_SPIRULA_OUTPUT_COLOR;
+        requested_sh_degree = -1;
+        scale_modifier = 1.0f;
+    }
+
+private:
+    static void write_gray_or_rgb(uint8_t* output, size_t index,
+                                  float red, float green, float blue) {
+        output[index * 4 + 0] = to_u8(red);
+        output[index * 4 + 1] = to_u8(green);
+        output[index * 4 + 2] = to_u8(blue);
+        // Keep the ImGui texture opaque; the RGB channels already contain
+        // the composited color or the complete scalar visualization.
+        output[index * 4 + 3] = 255;
+    }
+
+    void write_depth(uint8_t* output, size_t pixel_count) const {
+        float min_depth = std::numeric_limits<float>::infinity();
+        float max_depth = -std::numeric_limits<float>::infinity();
+        for (size_t index = 0; index < pixel_count; ++index) {
+            const float depth = host.scalar[index];
+            if (std::isfinite(depth) && depth > 0.0f) {
+                min_depth = std::min(min_depth, depth);
+                max_depth = std::max(max_depth, depth);
+            }
+        }
+
+        const bool have_depth = std::isfinite(min_depth);
+        const float range = max_depth - min_depth;
+        for (size_t index = 0; index < pixel_count; ++index) {
+            const float depth = host.scalar[index];
+            float intensity = 0.0f;
+            if (have_depth && std::isfinite(depth) && depth > 0.0f) {
+                intensity = range > 1e-6f
+                    ? 1.0f - (depth - min_depth) / range
+                    : 1.0f;
+            }
+            write_gray_or_rgb(output, index, intensity, intensity, intensity);
+        }
+    }
+
+    static uint8_t to_u8(float value) {
+        value = std::clamp(value, 0.0f, 1.0f);
+        return static_cast<uint8_t>(std::lround(value * 255.0f));
+    }
+};
+
+Renderer& renderer() {
+    static Renderer instance;
+    return instance;
+}
+
+}  // namespace
+
+extern "C" {
+
+const char* rosplat_spirula_last_error(void) {
+    return g_last_error.c_str();
+}
+
+int rosplat_spirula_device_count(void) {
+    try {
+        g_last_error.clear();
+        return backend::device_count();
+    } catch (const std::exception& error) {
+        g_last_error = error.what();
+        return -1;
+    }
+}
+
+int rosplat_spirula_device_info(int index, RosplatSpirulaDeviceInfo* info) {
+    return guard([&] {
+        if (!info) throw std::invalid_argument("device info output cannot be null");
+        const backend::DeviceInfo source = backend::device_info(index);
+        std::memset(info, 0, sizeof(*info));
+        std::strncpy(info->name, source.name, sizeof(info->name) - 1);
+        info->vram_bytes = source.vram_bytes;
+        info->usable = source.usable ? 1 : 0;
+    });
+}
+
+int rosplat_spirula_select_device(int index) {
+    return guard([&] {
+        if (!backend::device_select(index))
+            throw std::runtime_error("Vulkan device selection failed");
+    });
+}
+
+int rosplat_spirula_reset_scene(int sh_degree, int64_t initial_capacity) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return guard([&] { instance.reset(sh_degree, initial_capacity); });
+}
+
+int rosplat_spirula_append(int64_t count,
+                           const float* means_xyz,
+                           const float* quaternions_wxyz,
+                           const float* log_scales_xyz,
+                           const float* opacity_logits,
+                           const float* features_dc_rgb,
+                           const float* features_sh_rgb) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return guard([&] {
+        instance.append(count, means_xyz, quaternions_wxyz, log_scales_xyz,
+                        opacity_logits, features_dc_rgb, features_sh_rgb);
+    });
+}
+
+int rosplat_spirula_set_camera(int width,
+                               int height,
+                               const float* view_matrix_4x4,
+                               const float* intrinsics_fx_fy_cx_cy) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return guard([&] {
+        instance.set_camera(width, height, view_matrix_4x4,
+                            intrinsics_fx_fy_cx_cy);
+    });
+}
+
+int rosplat_spirula_set_render_options(int output_mode, int sh_degree) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return guard([&] { instance.set_render_options(output_mode, sh_degree); });
+}
+
+int rosplat_spirula_set_scale_modifier(float modifier) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return guard([&] { instance.set_scale_modifier(modifier); });
+}
+
+int rosplat_spirula_render_rgba8(uint8_t* output_rgba, size_t output_bytes) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return guard([&] { instance.render(output_rgba, output_bytes); });
+}
+
+int64_t rosplat_spirula_splat_count(void) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return instance.scene.count;
+}
+
+int64_t rosplat_spirula_capacity(void) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    return instance.scene.capacity;
+}
+
+void rosplat_spirula_shutdown(void) {
+    Renderer& instance = renderer();
+    std::lock_guard<std::mutex> lock(instance.mutex);
+    (void)guard([&] { instance.shutdown(); });
+}
+
+}  // extern "C"

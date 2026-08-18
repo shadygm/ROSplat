@@ -1,48 +1,31 @@
 services:
   rosplat:
     container_name: rosplat
-    entrypoint: /bin/bash
     build:
       context: ../
-      dockerfile: ${DOCKERFILE}
+      dockerfile: docker/Dockerfile
       args:
-        USER_UID: ${USER_UID}
-        USER_GID: ${USER_GID}
-        USERNAME: ${USERNAME}
-        HOSTNAME: ${HOSTNAME}
-        USER_PASSWORD: ${USER_PASSWORD}
-    image: rosplat
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+    image: rosplat:lyrical-vulkan
+    init: true
     network_mode: "host"
-    cpus: 8
-    mem_limit: 16g
     ipc: host
-    pid: host
-    user: "${USERNAME}:${USER_GID}"
-    hostname: ${HOSTNAME}
+    user: "${USER_UID:-1000}:${USER_GID:-1000}"
     stdin_open: true
     tty: true
-    working_dir: /home/${USERNAME}
-    runtime: nvidia
+    working_dir: /workspace
+    devices:
+      - "nvidia.com/gpu=all"
     environment:
-      - USER_UID=${USER_UID}
-      - USER_GID=${USER_GID}
-      - USERNAME=${USERNAME}
-      - ROS_DOMAIN_ID=0
-      - DISPLAY=unix${DISPLAY}
-      - XAUTHORITY=${XAUTHORITY}
-      - SSH_AUTH_SOCK=${SSH_AUTH_SOCK}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
-      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION}
+      DISPLAY: ${DISPLAY:-:0}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-graphics,display,utility}
+      RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-0}
     volumes:
-      - ../:/home/${USERNAME}/projects/ROSplat
+      - ../:/workspace
+      - rosplat-cache:/home/rosplat/.cache
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      - ${HOME}/.Xauthority:/home/${USERNAME}/.Xauthority:rw
-      - ${HOME}/.ssh:/home/${USERNAME}/.ssh:ro
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [ gpu ]
+
+volumes:
+  rosplat-cache:

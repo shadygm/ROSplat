@@ -24,7 +24,10 @@ class GaussianRenderBase:
     def set_scale_modifier(self, modifier: float) -> None:
         raise NotImplementedError()
 
-    def set_render_mode(self, mod: int) -> None:
+    def set_render_output(self, mode) -> None:
+        raise NotImplementedError()
+
+    def set_sh_degree(self, degree) -> None:
         raise NotImplementedError()
 
     def update_camera_pose(self) -> None:
