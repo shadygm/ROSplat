@@ -54,6 +54,8 @@ class App:
         self.world_settings.shutdown()
         if self.texture_registry is not None:
             self.texture_registry.shutdown()
+        if self.imgui_renderer is not None:
+            self.imgui_renderer.shutdown()
         shutdown_ros()
         if rclpy.ok():
             rclpy.shutdown()

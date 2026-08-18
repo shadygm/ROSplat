@@ -1,4 +1,4 @@
-from imgui_bundle import imgui
+from imgui_bundle import imgui, implot
 from wgpu.utils.imgui import ImguiRenderer
 
 
@@ -11,7 +11,7 @@ CANVAS_OPTIONS = {
 
 
 class RosplatImguiRenderer(ImguiRenderer):
-    """ImguiRenderer with the missing rendercanvas Space mapping restored."""
+    """WGPU renderer that owns ROSplat's Dear ImGui and ImPlot contexts."""
 
     KEY_MAP = {
         **ImguiRenderer.KEY_MAP,
@@ -20,3 +20,22 @@ class RosplatImguiRenderer(ImguiRenderer):
         " ": imgui.Key.space,
         "Space": imgui.Key.space,
     }
+
+    def __init__(self, device, canvas, render_target_format=None):
+        super().__init__(device, canvas, render_target_format)
+        # WGPU creates the Dear ImGui context, but ImPlot has a separate
+        # context that must be created afterwards.
+        self._implot_context = implot.create_context()
+
+    def render(self):
+        imgui.set_current_context(self.imgui_context)
+        implot.set_current_context(self._implot_context)
+        return super().render()
+
+    def shutdown(self) -> None:
+        """Destroy ImPlot before its parent Dear ImGui context disappears."""
+        if self._implot_context is None:
+            return
+        imgui.set_current_context(self.imgui_context)
+        implot.destroy_context(self._implot_context)
+        self._implot_context = None
