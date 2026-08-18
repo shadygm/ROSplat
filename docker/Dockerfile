@@ -76,7 +76,6 @@ COPY external/spirula-studio /tmp/rosplat-native/external/spirula-studio
 RUN cmake -S /tmp/rosplat-native -B /tmp/rosplat-native-build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/opt/rosplat-native \
-        -DROSPLAT_BUILD_TESTS=OFF \
     && cmake --build /tmp/rosplat-native-build --target rosplat_spirula \
         --parallel "$(nproc)" \
     && cmake --install /tmp/rosplat-native-build \

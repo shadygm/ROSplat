@@ -70,10 +70,6 @@ The Compose configuration enables the graphics, display, and utility driver
 capabilities required for Vulkan and X11 presentation. `wgpu-py` is forced to
 Vulkan and ROSplat rejects a different backend at startup.
 
-The renderer-correctness findings, measured one-million-splat streaming
-breakdown, and SOG recommendation are documented in
-[docs/renderer-streaming-investigation.md](docs/renderer-streaming-investigation.md).
-
 ### Native build without Docker
 
 Initialize the pinned renderer dependency and build the bridge:
