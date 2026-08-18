@@ -129,7 +129,6 @@ def display_renderer_tab() -> None:
     if renderer is None:
         imgui.text_disabled("Renderer is initializing...")
     elif imgui.begin_table("RendererStatus", 2):
-        _status_row("Backend", world_settings.get_renderer_type().value)
         _status_row("Device", renderer.device_name)
         _status_row("Frame rate", f"{imgui.get_io().framerate:.1f} FPS")
         _status_row("Splats", f"{world_settings.get_num_gaussians():,}")
