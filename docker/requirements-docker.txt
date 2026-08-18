@@ -1,8 +1,0 @@
-imgui-bundle==1.92.801
-wgpu==0.32.0
-rendercanvas==2.7.2
-glfw==2.10.2
-loguru==0.7.3
-pillow==12.1.1
-plyfile==1.1.4
-PyGLM==2.8.3

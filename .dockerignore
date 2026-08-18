@@ -2,7 +2,7 @@
 !.dockerignore
 !docker/Dockerfile
 !docker/entrypoint.sh
-!docker/requirements-docker.txt
+!requirements.txt
 !CMakeLists.txt
 !native/
 !native/**
