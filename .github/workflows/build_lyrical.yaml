@@ -14,8 +14,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
-      - name: Build ROS 2 Lyrical and CUDA 13 image
+      - name: Build ROS 2 Lyrical and Spirula Vulkan image
         working-directory: ./docker
         run: ./run_docker.sh -b
 
@@ -23,10 +25,10 @@ jobs:
         run: |
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
-            rosplat:lyrical-cuda13.3 \
+            rosplat:lyrical-vulkan \
             bash -c '
               test "$ROS_DISTRO" = lyrical &&
               ros2 interface show gaussian_interface/msg/GaussianArray &&
-              python3 -c "import glfw, gsplat, imgui_bundle, rclpy, torch; from gaussian_interface.msg import GaussianArray" &&
+              python3 -c "import glfw, glm, imgui_bundle, loguru, numpy, PIL, plyfile, rclpy, rendercanvas, wgpu; from gaussian_interface.msg import GaussianArray" &&
               python3 -m unittest discover -s tests
             '
