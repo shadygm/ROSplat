@@ -1,4 +1,4 @@
-numpy==2.5.2
+numpy==2.5.3
 imgui-bundle==1.92.900
 wgpu==0.32.0
 rendercanvas==2.7.2
