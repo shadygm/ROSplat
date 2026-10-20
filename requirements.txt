@@ -1,9 +1,9 @@
-numpy==2.5.2
+numpy==2.5.4
 imgui-bundle==1.92.900
 wgpu==0.32.0
 rendercanvas==2.7.2
-glfw==2.10.2
+glfw==2.11.0
 loguru==0.7.3
-pillow==12.3.0
+pillow==13.0.0
 plyfile==1.1.5
 PyGLM==2.8.3
